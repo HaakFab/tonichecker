@@ -27,10 +27,11 @@
       </div>
     </div>
     <div class="topbar-right">
-      <label class="select-wrap" for="commander-select">
-        <span>Commander</span>
-        <select id="commander-select"></select>
-      </label>
+      <div id="cmdr-picker-trigger" class="cmdr-selector-widget" role="button" tabindex="0" title="Click to select commander">
+        <span class="cmdr-marker-text">select commander</span>
+        <div class="cmdr-cards-fan" id="cmdr-cards-display"></div>
+      </div>
+      <select id="commander-select" style="display:none"></select>
       <a class="btn ghost" id="edh-link" href="https://edhtop16.com" target="_blank" rel="noopener">EDHTop16 ↗</a>
     </div>
   </header>
@@ -132,6 +133,7 @@
 
   <div id="card-popup" class="card-popup" aria-hidden="true"><div class="shimmer"></div><img alt=""></div>
   <div id="modal" class="modal" aria-hidden="true"><div class="modal-card glass" role="dialog" aria-modal="true"><button class="modal-close" id="modal-close" aria-label="Close">×</button><div id="modal-body"></div></div></div>
+  <div id="cmdr-modal" class="modal" aria-hidden="true"><div class="modal-card glass cmdr-modal-card" role="dialog" aria-modal="true"><button class="modal-close" id="cmdr-modal-close" aria-label="Close">×</button><div class="modal-head"><h2 style="font-family:var(--f-head);font-size:26px;color:var(--yellow);letter-spacing:.06em;margin:0">SELECT COMMANDER</h2><div class="hint" style="margin:4px 0 12px">Choose from 32 top cEDH tournament commanders (offline library)</div><input type="search" id="cmdr-search-input" placeholder="Search commander name or partners…" autocomplete="off"></div><div id="cmdr-grid" class="cmdr-grid"></div></div></div>
 
   <noscript>This tool needs JavaScript.</noscript>
   <script src="lib/plotly-basic.min.js"></script>

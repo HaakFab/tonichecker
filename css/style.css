@@ -63,8 +63,181 @@ a:hover { background: var(--yellow); color: var(--blue-deep); }
 .brand h1 { font-size: 34px; line-height: 1; letter-spacing: .06em; color: transparent; -webkit-text-stroke: 1.4px var(--ink);
   background: repeating-linear-gradient(135deg, var(--ink) 0 1px, transparent 1px 4px); -webkit-background-clip: text; background-clip: text; filter: url(#pencil); }
 .brand p { margin: 4px 0 0; color: var(--ink-dim); font-family: var(--f-hand); font-size: 14.5px; }
-.topbar-right { display: flex; align-items: center; gap: 12px; }
-.select-wrap { display: flex; align-items: center; gap: 10px; color: var(--ink-dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .14em; }
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+
+/* ---- Commander Selector Widget (Top bar) ---- */
+.cmdr-selector-widget {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border: 1px dashed transparent;
+  transition: all .2s ease;
+  user-select: none;
+  background: rgba(3, 30, 60, .25);
+}
+.cmdr-selector-widget:hover {
+  border-color: var(--yellow);
+  background: rgba(255, 230, 0, 0.08);
+}
+.cmdr-marker-text {
+  font-family: var(--f-head);
+  font-size: 16.5px;
+  font-weight: 900;
+  color: var(--yellow);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  transform: rotate(-6deg);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2.5px;
+  text-decoration-color: var(--yellow);
+  white-space: nowrap;
+  transition: transform .15s ease, color .15s ease;
+  filter: drop-shadow(1px 2px 3px rgba(0,0,0,0.6));
+}
+.cmdr-selector-widget:hover .cmdr-marker-text {
+  transform: rotate(-3deg) scale(1.06);
+  color: #ffffff;
+  text-decoration-color: #ffffff;
+}
+
+/* Card Fan Container */
+.cmdr-cards-fan {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 140px;
+  height: 72px;
+}
+.cmdr-card-slice {
+  width: 96px;
+  height: 66px;
+  border: 3px solid #ffffff;
+  border-radius: 6px;
+  overflow: hidden;
+  position: absolute;
+  background: #041224;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,0,0,0.8);
+  transition: transform .2s cubic-bezier(0.2, 0, 0, 1), box-shadow .2s;
+}
+.cmdr-card-slice img {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: cover;
+  object-position: top center;
+  pointer-events: none;
+}
+
+/* Single commander slightly tilted */
+.cmdr-cards-fan.single .cmdr-card-slice {
+  transform: rotate(-4deg);
+  left: 20px;
+}
+.cmdr-selector-widget:hover .cmdr-cards-fan.single .cmdr-card-slice {
+  transform: rotate(0deg) scale(1.06);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+}
+
+/* Partner commanders fanned */
+.cmdr-cards-fan.partner .cmdr-card-slice:first-child {
+  transform: rotate(-10deg) translate(-14px, -1px);
+  z-index: 2;
+  left: 18px;
+}
+.cmdr-cards-fan.partner .cmdr-card-slice:last-child {
+  transform: rotate(9deg) translate(14px, 3px);
+  z-index: 1;
+  right: 18px;
+}
+.cmdr-selector-widget:hover .cmdr-cards-fan.partner .cmdr-card-slice:first-child {
+  transform: rotate(-14deg) translate(-18px, -4px) scale(1.05);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+}
+.cmdr-selector-widget:hover .cmdr-cards-fan.partner .cmdr-card-slice:last-child {
+  transform: rotate(13deg) translate(18px, 4px) scale(1.05);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+}
+
+/* Commander Picker Modal */
+.cmdr-modal-card {
+  max-width: 960px;
+  width: 95vw;
+}
+.cmdr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding: 8px 4px;
+  margin-top: 14px;
+}
+.cmdr-grid-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all .15s ease;
+  position: relative;
+}
+.cmdr-grid-item:hover {
+  border-color: var(--yellow);
+  background: rgba(255, 230, 0, 0.08);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.cmdr-grid-item.active {
+  border-color: var(--lime);
+  background: rgba(57, 255, 20, 0.09);
+}
+.cmdr-grid-fan {
+  position: relative;
+  width: 68px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.cmdr-grid-card {
+  width: 50px;
+  height: 36px;
+  border: 2px solid #ffffff;
+  border-radius: 4px;
+  overflow: hidden;
+  position: absolute;
+  background: #000;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.cmdr-grid-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: cover;
+  object-position: top center;
+}
+.cmdr-grid-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cmdr-grid-name {
+  font-weight: bold;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.25;
+  word-break: break-word;
+}
+.cmdr-grid-meta {
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-family: var(--f-mono);
+}
 
 select, input[type=text], input[type=search], input[type=date], input[type=number] {
   background: rgba(3, 30, 60, .35); border: 1px solid var(--line); border-radius: 0; color: var(--ink);
@@ -74,7 +247,6 @@ select { cursor: pointer; }
 select option { background: var(--panel-solid); color: var(--ink); }
 select:focus, input:focus { background: rgba(255,255,255,.14); outline: 1px dashed var(--yellow); outline-offset: 2px; }
 input::placeholder { color: var(--ink-dim); font-family: var(--f-hand); }
-.select-wrap select { max-width: 380px; text-transform: none; letter-spacing: 0; }
 input[type=date] { padding: 6px 6px; font-size: 12.5px; }
 
 /* sliders – drafting scale */

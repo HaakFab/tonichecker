@@ -88,6 +88,9 @@
   function afterLoad() {
     $('#subtitle').textContent = '"Aber ich kann kein Excel"';
     $('#edh-link').href = 'https://edhtop16.com/commander/' + encodeURIComponent(D.commander);
+    updateCommanderDisplay(D.commander);
+    const sel = $('#commander-select');
+    if (sel) sel.value = slug;
     trendCards = null;
     $('#foot-cmdr').textContent = D.commander;
     $('#foot-date').textContent = new Date(D.updated).toLocaleDateString();
@@ -276,11 +279,11 @@
 
     const buckets = [['1st', (s) => s === 1], ['2nd', (s) => s === 2], ['3–4th', (s) => s >= 3 && s <= 4], ['5–8th', (s) => s >= 5 && s <= 8], ['9–16th', (s) => s >= 9 && s <= 16], ['17th+', (s) => s > 16]];
     plot('p-standing', [{ type: 'bar', x: buckets.map((b) => b[0]), y: buckets.map((b) => filtered.filter((d) => b[1](d.standing)).length),
-      marker: Object.assign(hatch('x'), { line: { color: INK, width: 1.5 } }), hovertemplate: '%{y} decks<extra></extra>' }]);
+      marker: Object.assign(hatch('/'), { line: { color: INK, width: 1.5 } }), hovertemplate: '%{y} decks<extra></extra>' }]);
 
     const bins = new Array(20).fill(0);
     filtered.forEach((d) => { bins[Math.min(19, Math.floor(d.winRate * 20))]++; });
-    plot('p-wrhist', [{ type: 'bar', x: bins.map((_, i) => i * 5 + 2.5), width: 4.4, y: bins, marker: hatch('x'), customdata: bins.map((_, i) => `${i * 5}–${i * 5 + 5}%`), hovertemplate: '%{customdata} win rate: %{y} decks<extra></extra>' }],
+    plot('p-wrhist', [{ type: 'bar', x: bins.map((_, i) => i * 5 + 2.5), width: 4.4, y: bins, marker: hatch('/'), customdata: bins.map((_, i) => `${i * 5}–${i * 5 + 5}%`), hovertemplate: '%{customdata} win rate: %{y} decks<extra></extra>' }],
       { xaxis: { ticksuffix: '%', range: [0, 100] } });
 
     plot('p-size', [{ type: 'scattergl', mode: 'markers', x: filtered.map((d) => d.tsize), y: filtered.map((d) => d.winRate * 100),
@@ -1529,23 +1532,121 @@
     document.addEventListener('scroll', hidePopup, true);
   }
 
+  // ---------- Commander Selector Widget & Modal ----------
+  function updateCommanderDisplay(commanderName) {
+    const fan = $('#cmdr-cards-display');
+    if (!fan || !commanderName) return;
+    const parts = commanderName.split(/\s*\/\s*/);
+    const isPartner = parts.length >= 2;
+    fan.className = `cmdr-cards-fan ${isPartner ? 'partner' : 'single'}`;
+    fan.innerHTML = parts.slice(0, 2).map((name) => `
+      <div class="cmdr-card-slice" title="${esc(name)}">
+        <img src="${imgUrl(name, 'normal')}" alt="${esc(name)}" onerror="this.onerror=null;this.src='${imgUrl(frontFace(name), 'normal')}';">
+      </div>
+    `).join('');
+  }
+
+  function openCommanderModal() {
+    const modal = $('#cmdr-modal');
+    if (!modal) return;
+    renderCommanderGrid();
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+    const input = $('#cmdr-search-input');
+    if (input) {
+      input.value = '';
+      setTimeout(() => input.focus(), 60);
+    }
+  }
+
+  function closeCommanderModal() {
+    const modal = $('#cmdr-modal');
+    if (!modal) return;
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  function renderCommanderGrid(query = '') {
+    const grid = $('#cmdr-grid');
+    if (!grid) return;
+    const idx = window.CEDH_INDEX || [];
+    const q = query.trim().toLowerCase();
+    const filteredList = idx.filter((c) => !q || c.name.toLowerCase().includes(q));
+
+    grid.innerHTML = filteredList.map((c) => {
+      const parts = c.name.split(/\s*\/\s*/);
+      const isPartner = parts.length >= 2;
+      const isActive = c.slug === slug;
+      const fanCards = parts.slice(0, 2).map((name, i) => `
+        <div class="cmdr-grid-card" style="${isPartner ? (i === 0 ? 'transform:rotate(-8deg);left:6px;z-index:2;' : 'transform:rotate(8deg);right:6px;z-index:1;') : 'transform:rotate(-3deg);left:10px;'}">
+          <img src="${imgUrl(name, 'small')}" alt="${esc(name)}" loading="lazy" onerror="this.onerror=null;this.src='${imgUrl(frontFace(name), 'small')}';">
+        </div>
+      `).join('');
+
+      return `
+        <div class="cmdr-grid-item ${isActive ? 'active' : ''}" data-cmdr-slug="${esc(c.slug)}">
+          <div class="cmdr-grid-fan">${fanCards}</div>
+          <div class="cmdr-grid-info">
+            <span class="cmdr-grid-name">${esc(c.name)}</span>
+            <span class="cmdr-grid-meta">${isActive ? '<b style="color:var(--lime)">CURRENT</b> · ' : ''}${c.deckCount || 'Offline'} decks</span>
+          </div>
+        </div>
+      `;
+    }).join('') || '<div class="dim" style="padding:20px;grid-column:1/-1">No commanders match your search.</div>';
+
+    $$('.cmdr-grid-item').forEach((item) => {
+      item.onclick = () => {
+        const s = item.dataset.cmdrSlug;
+        if (s && s !== slug) {
+          F = DEFAULT_F();
+          const sel = $('#commander-select');
+          if (sel) sel.value = s;
+          loadCommander(s);
+        }
+        closeCommanderModal();
+      };
+    });
+  }
+
   // ---------- boot ----------
   function init() {
     const idx = window.CEDH_INDEX || [];
     const sel = $('#commander-select');
     if (!idx.length) { $('#subtitle').textContent = 'No data found. Run: python3 crawler/crawl.py "<commander>"'; return; }
-    sel.innerHTML = idx.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
-    sel.addEventListener('change', () => { F = DEFAULT_F(); loadCommander(sel.value); });
+    if (sel) {
+      sel.innerHTML = idx.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
+      sel.addEventListener('change', () => { F = DEFAULT_F(); loadCommander(sel.value); });
+    }
+
+    const trigger = $('#cmdr-picker-trigger');
+    if (trigger) {
+      trigger.onclick = openCommanderModal;
+      trigger.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCommanderModal(); } };
+    }
+    const cmdrClose = $('#cmdr-modal-close');
+    if (cmdrClose) cmdrClose.onclick = closeCommanderModal;
+    const cmdrInput = $('#cmdr-search-input');
+    if (cmdrInput) {
+      cmdrInput.oninput = debounce((e) => {
+        renderCommanderGrid(e.target.value);
+      }, 100);
+    }
+
     initFilters(); initTabs(); initPopup();
     document.addEventListener('click', (e) => {
       const r = e.target.closest('[data-deck]'); if (r) openDeck(r.dataset.deck);
       if (e.target === $('#modal') || e.target.id === 'modal-close') closeModal();
+      if (e.target === $('#cmdr-modal')) closeCommanderModal();
     });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closeModal(); closeCommanderModal(); }
+    });
     const h = parseHash();
     if (h.t && $(`.tabs button[data-tab="${h.t}"]`)) { activeTab = h.t; setTabUI(); }
     const start = idx.find((c) => c.slug === h.c) ? h.c : idx[0].slug;
-    sel.value = start;
+    if (sel) sel.value = start;
     loadCommander(start);
   }
   function setTabUI() {
