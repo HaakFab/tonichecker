@@ -291,15 +291,15 @@
     const pm = new Map();
     for (const d of filtered) { const o = pm.get(d.player) || { n: 0, wr: 0, w: 0, t: 0 }; o.n++; o.wr += d.winRate; o.w += d.standing === 1; o.t += d.top; pm.set(d.player, o); }
     const prow = [...pm.entries()].sort((a, b) => b[1].n - a[1].n || b[1].wr - a[1].wr).slice(0, 10);
-    $('#t-players').innerHTML = `<table><thead><tr><th>Player</th><th class="num">Decks</th><th class="num">Wins</th><th class="num">Top cuts</th><th class="num">Avg WR</th></tr></thead><tbody>${
+    $('#t-players').innerHTML = `<table><thead><tr><th title="Tournament pilot name">Player</th><th class="num" title="Number of decklists entered in selected tournaments">Decks</th><th class="num" title="Number of 1st-place tournament victories">Wins</th><th class="num" title="Number of top-cut playoff appearances">Top cuts</th><th class="num" title="Average tournament match win rate">Avg WR</th></tr></thead><tbody>${
       prow.map(([p, o]) => `<tr><td>${esc(p)}</td><td class="num">${o.n}</td><td class="num">${o.w}</td><td class="num">${o.t}</td><td class="num">${pct(o.wr / o.n, 0)}</td></tr>`).join('')}</tbody></table>`;
     const win = filtered.filter((d) => d.standing === 1).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 10);
-    $('#t-winners').innerHTML = `<table><thead><tr><th>Date</th><th>Player</th><th>Tournament</th><th class="num">Size</th></tr></thead><tbody>${
+    $('#t-winners').innerHTML = `<table><thead><tr><th title="Date of the tournament victory">Date</th><th title="Winning pilot">Player</th><th title="Tournament event name and location">Tournament</th><th class="num" title="Total number of players in the event">Size</th></tr></thead><tbody>${
       win.map((d) => `<tr class="tr-click" data-deck="${esc(d.id)}"><td>${d.date}</td><td>${esc(d.player)}</td><td class="wrap">${esc(d.tname)}</td><td class="num">${d.tsize}</td></tr>`).join('') || '<tr><td colspan="4" class="dim">No winners in selection</td></tr>'}</tbody></table>`;
   }
   const kpi = (l, v, s) => `<div class="glass kpi"><div class="k-label">${l}</div><div class="k-value">${v}</div><div class="k-sub">${s}</div></div>`;
 
-  // ---------- Packages & N-grams (Co-occurrence mining) ----------
+  // ---------- Packages & N-grams (Co-occurrence mining up to N=6) ----------
   function getPackages(deckList) {
     if (!D || !deckList || !deckList.length) return { packages: [], cardPkgMap: new Map() };
     const n = deckList.length;
@@ -310,8 +310,8 @@
       for (const i of d.set) cardCounts[i]++;
     }
 
-    // Filter candidate cards: between 2% and 92% inclusion
-    const minCount = Math.max(6, Math.round(n * 0.02));
+    // Filter candidate cards: between 1.5% and 92% inclusion
+    const minCount = Math.max(5, Math.round(n * 0.015));
     const maxCount = Math.round(n * 0.92);
     const candidateIdxs = [];
     for (let i = 0; i < D.cards.length; i++) {
@@ -333,23 +333,23 @@
       }
     }
 
-    // Identify statistically coupled pairs (chi-square >= 10.8, lift >= 1.3, count >= 6)
+    // Statistically coupled pairs (chi-square >= 9.5, lift >= 1.25, count >= minCount)
     const pairs = [];
     const adj = new Map();
     for (const [k, nab] of pairCount.entries()) {
-      if (nab < 6) continue;
+      if (nab < minCount) continue;
       const ia = Math.floor(k / 100000);
       const ib = k % 100000;
       const na = cardCounts[ia], nb = cardCounts[ib];
       const expected = (na * nb) / n;
       const lift = nab / expected;
-      if (lift < 1.3) continue;
+      if (lift < 1.25) continue;
 
       const denom = Math.sqrt(na * (n - na) * nb * (n - nb));
       if (!denom) continue;
       const phi = (n * nab - na * nb) / denom;
       const chi2 = n * phi * phi;
-      if (chi2 >= 10.8) {
+      if (chi2 >= 9.5) {
         pairs.push({ ia, ib, nab, lift, phi });
         if (!adj.has(ia)) adj.set(ia, new Set());
         if (!adj.has(ib)) adj.set(ib, new Set());
@@ -358,59 +358,86 @@
       }
     }
 
-    // Mine 3-grams
-    const triples = [];
-    const usedTriples = new Set();
-    const pairKeysUsed = new Set();
-    for (const p of pairs) {
-      const nA = adj.get(p.ia), nB = adj.get(p.ib);
-      if (!nA || !nB) continue;
-      for (const ic of nA) {
-        if (ic !== p.ib && nB.has(ic)) {
-          const sorted = [p.ia, p.ib, ic].sort((x, y) => x - y);
-          const tkey = sorted.join('-');
-          if (!usedTriples.has(tkey)) {
-            usedTriples.add(tkey);
-            let nabc = 0;
-            for (const d of deckList) {
-              if (d.set.has(sorted[0]) && d.set.has(sorted[1]) && d.set.has(sorted[2])) nabc++;
-            }
-            if (nabc >= 6) {
-              triples.push({ cards: sorted, count: nabc });
-              pairKeysUsed.add(`${sorted[0]}-${sorted[1]}`);
-              pairKeysUsed.add(`${sorted[1]}-${sorted[2]}`);
-              pairKeysUsed.add(`${sorted[0]}-${sorted[2]}`);
-            }
+    // Mine cliques up to size 6
+    let currentCliques = pairs.map((p) => ({ cards: [Math.min(p.ia, p.ib), Math.max(p.ia, p.ib)], count: p.nab, size: 2, lift: p.lift }));
+    const allCliques = [...currentCliques];
+
+    for (let sz = 3; sz <= 6; sz++) {
+      const nextCliques = [];
+      const seen = new Set();
+      for (const cq of currentCliques) {
+        const cCards = cq.cards;
+        const firstAdj = adj.get(cCards[0]);
+        if (!firstAdj) continue;
+        for (const cand of firstAdj) {
+          if (cCards.includes(cand)) continue;
+          if (cand < cCards[cCards.length - 1]) continue;
+
+          let ok = true;
+          for (let i = 1; i < cCards.length; i++) {
+            const cadj = adj.get(cCards[i]);
+            if (!cadj || !cadj.has(cand)) { ok = false; break; }
+          }
+          if (!ok) continue;
+
+          const newCards = [...cCards, cand];
+          const key = newCards.join('-');
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          let count = 0;
+          for (const d of deckList) {
+            let hasAll = true;
+            for (const ci of newCards) if (!d.set.has(ci)) { hasAll = false; break; }
+            if (hasAll) count++;
+          }
+          if (count >= minCount) {
+            let prodProb = 1.0;
+            for (const ci of newCards) prodProb *= (cardCounts[ci] / n);
+            const expectedDecks = prodProb * n;
+            const lift = expectedDecks > 0 ? count / expectedDecks : 1.0;
+            const item = { cards: newCards, count, size: sz, lift };
+            nextCliques.push(item);
+            allCliques.push(item);
+          }
+        }
+      }
+      if (!nextCliques.length) break;
+      currentCliques = nextCliques;
+    }
+
+    // Subsumption check (detect when a smaller sub-package is covered by a larger one)
+    allCliques.sort((a, b) => b.size - a.size || b.count - a.count);
+    for (let i = 0; i < allCliques.length; i++) {
+      const ci = allCliques[i];
+      ci.isSub = false;
+      for (let j = 0; j < i; j++) {
+        const cj = allCliques[j];
+        if (cj.size > ci.size && ci.cards.every((c) => cj.cards.includes(c))) {
+          if (cj.count >= ci.count * 0.82) {
+            ci.isSub = true;
+            ci.parentName = cj.cards.map((c) => D.cards[c].name).join(' + ');
+            break;
           }
         }
       }
     }
 
-    const raw = [];
-    for (const t of triples) raw.push({ cardIdxs: t.cards, count: t.count, size: 3 });
-    for (const p of pairs) {
-      const pkey = `${Math.min(p.ia, p.ib)}-${Math.max(p.ia, p.ib)}`;
-      if (!pairKeysUsed.has(pkey)) {
-        raw.push({ cardIdxs: [p.ia, p.ib], count: p.nab, size: 2, lift: p.lift });
-      }
-    }
-    raw.sort((a, b) => b.count - a.count);
-
     const packages = [];
     const cardPkgMap = new Map();
     const archetypes = D.archetypes || [];
 
-    for (let id = 0; id < Math.min(36, raw.length); id++) {
-      const rp = raw[id];
-      const cardNames = rp.cardIdxs.map((i) => D.cards[i].name);
+    for (let id = 0; id < allCliques.length; id++) {
+      const rp = allCliques[id];
+      const cardNames = rp.cards.map((i) => D.cards[i].name);
       const withDecks = [], withoutDecks = [];
       for (const d of deckList) {
         let hasAll = true;
-        for (const ci of rp.cardIdxs) if (!d.set.has(ci)) { hasAll = false; break; }
+        for (const ci of rp.cards) if (!d.set.has(ci)) { hasAll = false; break; }
         if (hasAll) withDecks.push(d); else withoutDecks.push(d);
       }
       const nWith = withDecks.length, nWithout = withoutDecks.length;
-      if (nWith < 5) continue;
+      if (nWith < 4) continue;
 
       const wrWith = mean(withDecks.map((d) => d.winRate));
       const wrWithout = nWithout ? mean(withoutDecks.map((d) => d.winRate)) : 0;
@@ -437,15 +464,32 @@
       }
 
       const pObj = {
-        id, name: cardNames.join(' + '), cards: cardNames, cardIdxs: rp.cardIdxs,
-        count: nWith, share: nWith / n, lift: rp.lift, wrWith, wrWithout,
-        delta, sig, z, topWith, topWithout, domArch
+        id,
+        name: cardNames.join(' + '),
+        cards: cardNames,
+        cardIdxs: rp.cards,
+        size: rp.size,
+        isSub: rp.isSub,
+        parentName: rp.parentName || '',
+        count: nWith,
+        share: nWith / n,
+        lift: rp.lift,
+        wrWith,
+        wrWithout,
+        delta,
+        sig,
+        z,
+        topWith,
+        topWithout,
+        domArch,
       };
       packages.push(pObj);
 
-      for (const ci of rp.cardIdxs) {
-        if (!cardPkgMap.has(ci)) cardPkgMap.set(ci, []);
-        cardPkgMap.get(ci).push(pObj);
+      if (!rp.isSub) {
+        for (const ci of rp.cards) {
+          if (!cardPkgMap.has(ci)) cardPkgMap.set(ci, []);
+          cardPkgMap.get(ci).push(pObj);
+        }
       }
     }
 
@@ -531,12 +575,18 @@
       return dir * ((isNaN(x) ? -Infinity : x) - (isNaN(y) ? -Infinity : y));
     });
     const cols = [
-      ['name', 'Card'], ['type', 'Type'], ['inclusion', 'Inclusion'],
-      ['hasPkg', 'Package', 1],
-      ['n', 'Decks', 1], ['wrWith', 'WR with', 1], ['wrWithout', 'WR without', 1],
-      ['delta', 'Δ WR', 1], ['topWith', 'Top-cut w/', 1], ['topWithout', 'Top-cut w/o', 1]
+      ['name', 'Card', 0, 'Card name (hover to view card art)'],
+      ['type', 'Type', 0, 'Primary card type (Creature, Instant, Sorcery, etc.)'],
+      ['inclusion', 'Inclusion', 0, 'Percentage of filtered decks playing this card'],
+      ['hasPkg', 'Package', 1, 'Statistically coupled with other cards in an N-gram package (Lift ≥ 1.25×, χ² p < 0.001)'],
+      ['n', 'Decks', 1, 'Total number of decks running this card'],
+      ['wrWith', 'WR with', 1, 'Average match win rate when this card is included in the deck'],
+      ['wrWithout', 'WR without', 1, 'Average match win rate when this card is omitted'],
+      ['delta', 'Δ WR', 1, 'Win rate difference (with vs. without). Tagged as insig. if sample < 25 or p ≥ 0.05'],
+      ['topWith', 'Top-cut w/', 1, 'Percentage of decks with this card reaching top bracket/cut'],
+      ['topWithout', 'Top-cut w/o', 1, 'Percentage of decks without this card reaching top bracket/cut']
     ];
-    $('#cards-table thead').innerHTML = '<tr>' + cols.map(([k, l, num]) => `<th data-sort="${k}" class="${num ? 'num ' : ''}${k === key ? 'sorted' + (dir > 0 ? ' asc' : '') : ''}">${l}</th>`).join('') + '</tr>';
+    $('#cards-table thead').innerHTML = '<tr>' + cols.map(([k, l, num, tip]) => `<th data-sort="${k}" title="${esc(tip || l)}" class="${num ? 'num ' : ''}${k === key ? 'sorted' + (dir > 0 ? ' asc' : '') : ''}">${l}</th>`).join('') + '</tr>';
     const shown = list.slice(0, limits.cards);
     const f = (x) => (isNaN(x) ? '–' : pct(x, 1));
     $('#cards-table tbody').innerHTML = shown.map((r) => {
@@ -593,7 +643,7 @@
     const risers = [...movers].sort((x, y) => y.d - x.d).slice(0, 12), fallers = [...movers].sort((x, y) => x.d - y.d).slice(0, 12);
     if (!trendCards) trendCards = [...risers.slice(0, 3), ...fallers.slice(0, 3)].map((m) => m.name);
 
-    const mtable = (arr) => `<table><thead><tr><th>Card</th><th class="num">Before</th><th class="num">Last 3 mo.</th><th class="num">Δ</th></tr></thead><tbody>${
+    const mtable = (arr) => `<table><thead><tr><th title="Card name (hover to view card art)">Card</th><th class="num" title="Inclusion rate prior to the last 3 months">Before</th><th class="num" title="Inclusion rate over the most recent 3 months">Last 3 mo.</th><th class="num" title="Percentage point change in inclusion (Recent - Before)">Δ</th></tr></thead><tbody>${
       arr.map((m) => `<tr><td><span class="cardname" data-card="${esc(m.name)}">${esc(m.name)}</span></td><td class="num dim">${pct(m.o, 0)}</td><td class="num">${pct(m.r, 0)}</td><td class="num ${m.d > 0 ? 'pos' : 'neg'}">${m.d > 0 ? '+' : ''}${(m.d * 100).toFixed(0)} pp</td></tr>`).join('')}</tbody></table>`;
 
     el.innerHTML = `
@@ -647,8 +697,18 @@
       const x = a[key], y = b[key];
       return dir * (typeof x === 'string' ? x.localeCompare(y) : x - y) || (a.date < b.date ? 1 : -1);
     });
-    const cols = [['date', 'Date'], ['player', 'Player'], ['tname', 'Tournament'], ['tsize', 'Size', 1], ['standing', 'Finish'], ['winRate', 'Win rate', 1], ['w', 'W-L-D'], ['lands', 'Lands', 1], ['avgCmc', 'Avg MV', 1]];
-    $('#decks-table thead').innerHTML = '<tr>' + cols.map(([k, l, num]) => `<th data-sort="${k}" class="${num ? 'num ' : ''}${k === key ? 'sorted' + (dir > 0 ? ' asc' : '') : ''}">${l}</th>`).join('') + '</tr>';
+    const cols = [
+      ['date', 'Date', 0, 'Tournament date (YYYY-MM-DD)'],
+      ['player', 'Player', 0, 'Pilot / player name'],
+      ['tname', 'Tournament', 0, 'Tournament / event name'],
+      ['tsize', 'Size', 1, 'Total player attendance in tournament'],
+      ['standing', 'Finish', 0, 'Final tournament standing / bracket cut (1st, Top 4, Top 16, etc.)'],
+      ['winRate', 'Win rate', 1, 'Overall tournament match win rate (wins / total rounds)'],
+      ['w', 'W-L-D', 0, 'Match record: Wins - Losses - Draws'],
+      ['lands', 'Lands', 1, 'Total number of lands in the 99'],
+      ['avgCmc', 'Avg MV', 1, 'Average mana value of non-land cards (lower = faster curve)']
+    ];
+    $('#decks-table thead').innerHTML = '<tr>' + cols.map(([k, l, num, tip]) => `<th data-sort="${k}" title="${esc(tip || l)}" class="${num ? 'num ' : ''}${k === key ? 'sorted' + (dir > 0 ? ' asc' : '') : ''}">${l}</th>`).join('') + '</tr>';
     const shown = list.slice(0, limits.decks);
     $('#decks-table tbody').innerHTML = shown.map((d) => `<tr class="tr-click" data-deck="${esc(d.id)}"><td>${d.date}</td><td>${esc(d.player)}</td><td class="wrap">${esc(d.tname)}</td>
       <td class="num">${d.tsize}</td><td>${standingBadge(d.standing, d.top)}</td><td class="num">${pct(d.winRate, 0)}</td><td>${d.w}-${d.l}-${d.d}</td>
@@ -986,11 +1046,11 @@
           <table class="arch-sig-table">
             <thead>
               <tr>
-                <th class="col-card">Signature Card</th>
-                <th class="col-type">Type</th>
-                <th class="num">In Archetype</th>
-                <th class="num">In Others</th>
-                <th class="num">Differential</th>
+                <th class="col-card" title="Distinctive card that characterizes this archetype">Signature Card</th>
+                <th class="col-type" title="Primary card type">Type</th>
+                <th class="num" title="Inclusion rate within this archetype">In Archetype</th>
+                <th class="num" title="Inclusion rate across all other archetypes of this commander">In Others</th>
+                <th class="num" title="Difference in inclusion rate (+X percentage points more frequent here)">Differential</th>
               </tr>
             </thead>
             <tbody>
@@ -1026,10 +1086,10 @@
           <table class="arch-sig-table">
             <thead>
               <tr>
-                <th>Archetype</th>
-                <th class="num">Share</th>
-                <th class="num">Win Rate</th>
-                <th class="col-card">Top Defining Signature Card</th>
+                <th title="Clustered deck archetype name">Archetype</th>
+                <th class="num" title="Percentage share among all decks of this commander">Share</th>
+                <th class="num" title="Average tournament win rate for decks in this cluster">Win Rate</th>
+                <th class="col-card" title="Card with highest differential inclusion identifying this archetype">Top Defining Signature Card</th>
               </tr>
             </thead>
             <tbody>
@@ -1141,14 +1201,14 @@
           <table>
             <thead>
               <tr>
-                <th>Archetype</th>
-                <th class="num">Decks</th>
-                <th class="num">Overall Share</th>
-                <th class="num">Recent 3M Share</th>
-                <th class="num">Share Trend</th>
-                <th class="num">Overall Win Rate</th>
-                <th class="num">Recent 3M Win Rate</th>
-                <th class="num">Top Cut Rate</th>
+                <th title="Clustered deck archetype name">Archetype</th>
+                <th class="num" title="Total number of tournament decklists in this cluster">Decks</th>
+                <th class="num" title="All-time percentage share among this commander's decks">Overall Share</th>
+                <th class="num" title="Percentage share over the most recent 3 months">Recent 3M Share</th>
+                <th class="num" title="Percentage point shift in meta share (Recent 3M vs Baseline)">Share Trend</th>
+                <th class="num" title="All-time average match win rate">Overall Win Rate</th>
+                <th class="num" title="Average match win rate over the most recent 3 months">Recent 3M Win Rate</th>
+                <th class="num" title="Percentage of decks reaching tournament top bracket / cut">Top Cut Rate</th>
               </tr>
             </thead>
             <tbody>
@@ -1215,7 +1275,7 @@
   }
 
   // ---------- Packages & N-Grams Tab ----------
-  const pkgState = { q: '', sort: 'count', dir: -1 };
+  const pkgState = { q: '', size: 'all', hideSub: true, sort: 'count', dir: -1 };
   function renderPackages() {
     const el = $('#tab-packages');
     if (!filtered.length) { el.innerHTML = noData(); return; }
@@ -1232,11 +1292,23 @@
     const highestLiftPkg = [...packages].sort((a, b) => (b.lift || 0) - (a.lift || 0))[0];
 
     const q = (pkgState.q || '').toLowerCase();
-    let list = packages.filter((p) => !q || p.name.toLowerCase().includes(q));
+    let list = packages.filter((p) => {
+      if (pkgState.hideSub && p.isSub) return false;
+      if (pkgState.size !== 'all' && p.size !== +pkgState.size) return false;
+      if (q && !p.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    const { sort: sKey, dir: sDir } = pkgState;
+    list.sort((a, b) => {
+      const x = a[sKey], y = b[sKey];
+      if (typeof x === 'string') return sDir * x.localeCompare(y);
+      return sDir * ((isNaN(x) ? -Infinity : x) - (isNaN(y) ? -Infinity : y));
+    });
 
     el.innerHTML = `
       <div class="kpis">
-        ${kpi('Detected Packages', packages.length, 'statistically coupled N-grams')}
+        ${kpi('Detected Packages', packages.length, 'statistically coupled N-grams (N=2..6)')}
         ${kpi('Most Popular', topDecksPkg.name.split(' + ')[0] + '…', `${topDecksPkg.count} decks (${pct(topDecksPkg.share, 0)})`)}
         ${kpi('Top Win Rate', topWrPkg.name.split(' + ')[0] + '…', `${pct(topWrPkg.wrWith, 1)} WR (${topWrPkg.count} decks)`)}
         ${kpi('Max Lift Ratio', `${highestLiftPkg.lift ? highestLiftPkg.lift.toFixed(1) + '×' : '–'}`, 'coupling over expectation')}
@@ -1244,26 +1316,50 @@
 
       <div class="glass panel" style="margin-bottom:24px">
         <h3>Card Packages &amp; Co-Occurrence N-Grams</h3>
-        <div class="hint">Synergistic card clusters that appear together significantly more than random chance (χ² p &lt; 0.001, Lift &gt; 1.30×). Click any card name to inspect.</div>
-        <div class="toolbar">
-          <input type="search" id="pkg-search" placeholder="Search cards in packages…" value="${esc(pkgState.q)}">
+        <div class="hint">Synergistic card clusters that appear together significantly more than random chance (χ² p &lt; 0.001, Lift &gt; 1.25×). Sub-packages can be collapsed into their superset engines.</div>
+        <div class="toolbar" style="flex-wrap:wrap; gap:12px; align-items:center">
+          <input type="search" id="pkg-search" placeholder="Search cards in packages…" value="${esc(pkgState.q)}" style="min-width:200px">
+          
+          <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-dim)">
+            SIZE N:
+            <select id="pkg-size" style="width:auto">
+              <option value="all" ${pkgState.size === 'all' ? 'selected' : ''}>All sizes (N=2–6)</option>
+              <option value="2" ${pkgState.size === '2' ? 'selected' : ''}>N = 2 (Synergy Pairs)</option>
+              <option value="3" ${pkgState.size === '3' ? 'selected' : ''}>N = 3 (Triples)</option>
+              <option value="4" ${pkgState.size === '4' ? 'selected' : ''}>N = 4 (Core Engines)</option>
+              <option value="5" ${pkgState.size === '5' ? 'selected' : ''}>N = 5 (5-Card Lines)</option>
+              <option value="6" ${pkgState.size === '6' ? 'selected' : ''}>N = 6 (6-Card Suites)</option>
+            </select>
+          </label>
+
+          <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-dim)">
+            SLIDER:
+            <input type="range" id="pkg-slider" min="2" max="6" value="${pkgState.size === 'all' ? 3 : pkgState.size}" style="width:80px; vertical-align:middle">
+            <span id="pkg-slider-label" style="font-family:var(--f-mono); color:var(--cyan); min-width:40px">${pkgState.size === 'all' ? 'All' : `N=${pkgState.size}`}</span>
+          </label>
+
+          <label class="chk" title="When a 3+ card engine is found (e.g. Underworld Breach + Brain Freeze + LED), hide the smaller 2-card sub-pairs that are already part of it">
+            <input type="checkbox" id="pkg-hidesub" ${pkgState.hideSub ? 'checked' : ''}>
+            Hide redundant sub-packages
+          </label>
+
           <span class="spacer"></span>
-          <span class="dim">${list.length} packages found</span>
+          <span class="dim">${list.length} packages shown (${packages.length} total)</span>
         </div>
 
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Package (N-Gram Cards)</th>
-                <th class="num">Size</th>
-                <th class="num">Decks</th>
-                <th class="num">Share</th>
-                <th class="num">Lift Ratio</th>
-                <th class="num">WR with Pack</th>
-                <th class="num">Δ Win Rate</th>
-                <th class="num">Top-Cut Rate</th>
-                <th>Primary Archetype</th>
+                <th data-pkg-sort="name" class="${sKey === 'name' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Synergistic card group appearing together significantly more than random expectation">Package (N-Gram Cards)</th>
+                <th class="num ${sKey === 'size' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="size" title="Number of coupled cards in this package (N = 2 to 6)">Size</th>
+                <th class="num ${sKey === 'count' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="count" title="Number of decklists containing every card in this package">Decks</th>
+                <th class="num ${sKey === 'share' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="share" title="Percentage of all filtered decks running this entire package">Share</th>
+                <th class="num ${sKey === 'lift' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="lift" title="Lift ratio: observed frequency divided by expected random chance (>1.0 = positive synergy)">Lift Ratio</th>
+                <th class="num ${sKey === 'wrWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="wrWith" title="Average match win rate of decks containing all cards in this package">WR with Pack</th>
+                <th class="num ${sKey === 'delta' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="delta" title="Win rate difference compared to decks missing one or more package cards (insig. if sample is small or p ≥ 0.05)">Δ Win Rate</th>
+                <th class="num ${sKey === 'topWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="topWith" title="Percentage of decks with this package that reached tournament top-cut">Top-Cut Rate</th>
+                <th data-pkg-sort="domArch" class="${sKey === 'domArch' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Primary archetype cluster where this package is most heavily utilized">Primary Archetype</th>
               </tr>
             </thead>
             <tbody>
@@ -1275,14 +1371,17 @@
                   ? `<span class="${p.delta > 0 ? 'pos' : 'neg'}" title="Statistically significant (z=${p.z.toFixed(2)}, p < 0.05)">${deltaFormatted}</span>`
                   : `<span class="delta-insig dim" title="z=${p.z.toFixed(2)}">${deltaFormatted} <small class="insig-tag">insig.</small></span>`;
 
+                const subNotice = p.isSub ? `<span class="dim" style="font-size:10px; display:block">sub-pack of: ${esc(p.parentName)}</span>` : '';
+
                 return `
                   <tr>
                     <td>
                       <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center">
                         ${p.cards.map((c) => `<span class="cardname" data-card="${esc(c)}">${esc(c)}</span>`).join(' <span class="dim">+</span> ')}
                       </div>
+                      ${subNotice}
                     </td>
-                    <td class="num">${p.cards.length}-gram</td>
+                    <td class="num"><span class="badge cut" style="font-size:11px">${p.size}-gram</span></td>
                     <td class="num">${p.count}</td>
                     <td class="num">${pct(p.share, 1)}</td>
                     <td class="num">${p.lift ? p.lift.toFixed(2) + '×' : '–'}</td>
@@ -1305,7 +1404,7 @@
           ${list.slice(0, 9).map((p) => `
             <div class="pkg-card">
               <div class="pkg-card-head">
-                <span class="pkg-title">${p.cards.length}-Card Package</span>
+                <span class="pkg-title">${p.size}-Card Package</span>
                 <span class="badge cut">${p.lift ? p.lift.toFixed(1) + '× Lift' : 'Coupled'}</span>
               </div>
               <div class="pkg-cards-list">
@@ -1334,6 +1433,43 @@
         renderPackages();
       });
     }
+    const szSel = $('#pkg-size');
+    if (szSel) {
+      szSel.onchange = (e) => {
+        pkgState.size = e.target.value;
+        const sl = $('#pkg-slider');
+        if (sl && e.target.value !== 'all') sl.value = e.target.value;
+        renderPackages();
+      };
+    }
+    const slIn = $('#pkg-slider');
+    if (slIn) {
+      slIn.oninput = (e) => {
+        pkgState.size = e.target.value;
+        const sel = $('#pkg-size');
+        if (sel) sel.value = e.target.value;
+        renderPackages();
+      };
+    }
+    const hsChk = $('#pkg-hidesub');
+    if (hsChk) {
+      hsChk.onchange = (e) => {
+        pkgState.hideSub = e.target.checked;
+        renderPackages();
+      };
+    }
+    $$('#tab-packages th[data-pkg-sort]').forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.pkgSort;
+        if (pkgState.sort === k) {
+          pkgState.dir = -pkgState.dir;
+        } else {
+          pkgState.sort = k;
+          pkgState.dir = (k === 'name' || k === 'domArch') ? 1 : -1;
+        }
+        renderPackages();
+      };
+    });
   }
   const GROUP_ORDER = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Battle', 'Other', 'Land'];
   function openDeck(id) {
