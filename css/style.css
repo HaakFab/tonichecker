@@ -68,18 +68,14 @@ a:hover { background: var(--yellow); color: var(--blue-deep); }
 /* ---- Commander Selector Widget (Top bar) ---- */
 .cmdr-selector-widget {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 14px;
   cursor: pointer;
-  padding: 4px 10px;
-  border: 1px dashed transparent;
-  transition: all .2s ease;
+  padding: 0 4px;
+  margin-bottom: -14px; /* Flush against header bottom double line */
+  border: none;
+  background: transparent;
   user-select: none;
-  background: rgba(3, 30, 60, .25);
-}
-.cmdr-selector-widget:hover {
-  border-color: var(--yellow);
-  background: rgba(255, 230, 0, 0.08);
 }
 .cmdr-marker-text {
   font-family: var(--f-head);
@@ -96,6 +92,7 @@ a:hover { background: var(--yellow); color: var(--blue-deep); }
   white-space: nowrap;
   transition: transform .15s ease, color .15s ease;
   filter: drop-shadow(1px 2px 3px rgba(0,0,0,0.6));
+  margin-bottom: 22px;
 }
 .cmdr-selector-widget:hover .cmdr-marker-text {
   transform: rotate(-3deg) scale(1.06);
@@ -103,24 +100,26 @@ a:hover { background: var(--yellow); color: var(--blue-deep); }
   text-decoration-color: #ffffff;
 }
 
-/* Card Fan Container */
+/* Card Fan Container: clipped at the bottom so bottom is hidden behind main window */
 .cmdr-cards-fan {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   position: relative;
-  width: 140px;
-  height: 72px;
+  width: 145px;
+  height: 84px;
+  overflow: hidden;
 }
 .cmdr-card-slice {
   width: 96px;
-  height: 66px;
-  border: 3px solid #ffffff;
-  border-radius: 6px;
+  height: 136px;
+  border: 3.5px solid #ffffff;
+  border-radius: 8px 8px 0 0;
   overflow: hidden;
   position: absolute;
-  background: #041224;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,0,0,0.8);
+  top: 4px;
+  background: var(--blue-deep);
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.5);
   transition: transform .2s cubic-bezier(0.2, 0, 0, 1), box-shadow .2s;
 }
 .cmdr-card-slice img {
@@ -134,32 +133,32 @@ a:hover { background: var(--yellow); color: var(--blue-deep); }
 
 /* Single commander slightly tilted */
 .cmdr-cards-fan.single .cmdr-card-slice {
-  transform: rotate(-4deg);
-  left: 20px;
+  transform: rotate(-3.5deg);
+  left: 24px;
 }
 .cmdr-selector-widget:hover .cmdr-cards-fan.single .cmdr-card-slice {
-  transform: rotate(0deg) scale(1.06);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+  transform: rotate(0deg) translateY(-4px) scale(1.04);
+  box-shadow: 0 -4px 18px rgba(0,0,0,0.8), 0 0 10px rgba(255, 230, 0, 0.6);
 }
 
 /* Partner commanders fanned */
 .cmdr-cards-fan.partner .cmdr-card-slice:first-child {
-  transform: rotate(-10deg) translate(-14px, -1px);
+  transform: rotate(-9deg) translate(-14px, 2px);
   z-index: 2;
-  left: 18px;
+  left: 20px;
 }
 .cmdr-cards-fan.partner .cmdr-card-slice:last-child {
-  transform: rotate(9deg) translate(14px, 3px);
+  transform: rotate(9deg) translate(14px, 6px);
   z-index: 1;
-  right: 18px;
+  right: 20px;
 }
 .cmdr-selector-widget:hover .cmdr-cards-fan.partner .cmdr-card-slice:first-child {
-  transform: rotate(-14deg) translate(-18px, -4px) scale(1.05);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+  transform: rotate(-13deg) translate(-18px, -2px) scale(1.04);
+  box-shadow: 0 -4px 18px rgba(0,0,0,0.8), 0 0 10px rgba(255, 230, 0, 0.6);
 }
 .cmdr-selector-widget:hover .cmdr-cards-fan.partner .cmdr-card-slice:last-child {
-  transform: rotate(13deg) translate(18px, 4px) scale(1.05);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.85), 0 0 10px rgba(255, 230, 0, 0.6);
+  transform: rotate(13deg) translate(18px, 2px) scale(1.04);
+  box-shadow: 0 -4px 18px rgba(0,0,0,0.8), 0 0 10px rgba(255, 230, 0, 0.6);
 }
 
 /* Commander Picker Modal */
@@ -428,8 +427,19 @@ td.wrap { white-space: normal; }
 .foot > div:nth-last-child(-n+4) { border-bottom: 0; }
 .foot small { display: block; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .14em; font-size: 9.5px; }
 .foot big { font-family: var(--f-head); font-size: 22px; letter-spacing: .06em; font-weight: 400; text-transform: uppercase; }
-.foot .hatch { background: repeating-linear-gradient(135deg, var(--ink) 0 1px, transparent 1px 5px); opacity: .55; }
-.foot .note { font-family: var(--f-hand); font-size: 14px; color: var(--ink-dim); grid-column: span 2; }
+.font-mono { font-family: var(--f-mono); }
+
+/* ---- Pod Simulator & Matchups ---- */
+.pod-seat-card {
+  transition: transform .15s ease, border-color .15s;
+}
+.pod-seat-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--yellow) !important;
+}
+.pod-seat-card.self-seat {
+  box-shadow: 0 0 14px rgba(57, 255, 20, 0.15);
+}
 
 @media (max-width: 960px) {
   .layout { grid-template-columns: 1fr; padding: 14px; }

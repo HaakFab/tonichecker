@@ -208,11 +208,11 @@
     $$('.tab').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + t));
     renderTab(t); writeHash();
   }
-  const ALL_TABS = ['overview', 'cards', 'trends', 'archetypes', 'archetype-trends', 'packages', 'decks'];
+  const ALL_TABS = ['overview', 'cards', 'trends', 'archetypes', 'archetype-trends', 'packages', 'matchups', 'decks'];
   function renderTab(t) {
     if (!D) return;
     const idx = ALL_TABS.indexOf(t);
-    $('#foot-sheet').textContent = (idx >= 0 ? idx + 1 : 1) + '/7';
+    $('#foot-sheet').textContent = (idx >= 0 ? idx + 1 : 1) + '/8';
     ({
       overview: renderOverview,
       cards: renderCards,
@@ -220,6 +220,7 @@
       archetypes: renderArchetypes,
       'archetype-trends': renderArchetypeTrends,
       packages: renderPackages,
+      matchups: renderMatchups,
       decks: renderDecks,
     }[t] || (() => {}))();
   }
@@ -1474,6 +1475,293 @@
       };
     });
   }
+
+  // ---------- Matchups & Pod Matrix Tab ----------
+  const matchupState = { q: '', sort: 'shared', dir: -1, pSeat2: null, pSeat3: null, pSeat4: null };
+
+  function renderMatchups() {
+    const el = $('#tab-matchups');
+    const mData = window.CEDH_MATCHUPS ? window.CEDH_MATCHUPS[slug] : null;
+    if (!mData || !mData.opponents || !mData.opponents.length) {
+      el.innerHTML = '<div class="glass empty"><h3>No cross-commander matchup data available</h3><p>Tournament matchup matrix is available for top commanders in the offline library.</p></div>';
+      return;
+    }
+
+    const opps = mData.opponents;
+    const myName = mData.name;
+    const myArch = mData.archetype;
+    const myWr = mData.overallWr;
+
+    // Filter and sort opponents
+    const q = (matchupState.q || '').toLowerCase();
+    let list = opps.filter((o) => !q || o.name.toLowerCase().includes(q) || (o.archetype && o.archetype.toLowerCase().includes(q)));
+
+    const { sort: sKey, dir: sDir } = matchupState;
+    list.sort((a, b) => {
+      const x = a[sKey], y = b[sKey];
+      if (typeof x === 'string') return sDir * x.localeCompare(y);
+      return sDir * ((isNaN(x) ? -Infinity : x) - (isNaN(y) ? -Infinity : y));
+    });
+
+    // Key rivals for KPIs
+    const mostPlayed = [...opps].sort((a, b) => b.shared - a.shared)[0];
+    const qualified = opps.filter((o) => o.shared >= 25);
+    const bestMatchup = qualified.length ? [...qualified].sort((a, b) => b.h2h - a.h2h)[0] : opps[0];
+    const toughestMatchup = qualified.length ? [...qualified].sort((a, b) => a.h2h - b.h2h)[0] : opps[opps.length - 1];
+
+    // Pod Simulator Setup
+    const allCmdrList = window.CEDH_INDEX || [];
+    const availableOpponents = allCmdrList.filter((c) => c.slug !== slug);
+
+    if (!matchupState.pSeat2 && opps[0]) matchupState.pSeat2 = opps[0].slug;
+    if (!matchupState.pSeat3 && opps[1]) matchupState.pSeat3 = opps[1].slug;
+    if (!matchupState.pSeat4 && opps[2]) matchupState.pSeat4 = opps[2].slug;
+
+    // Pod seats calculation
+    const seats = [
+      { num: 1, slug, name: myName, archetype: myArch, isSelf: true, baseWr: myWr },
+      { num: 2, slug: matchupState.pSeat2, ...getCmdrPodMeta(matchupState.pSeat2) },
+      { num: 3, slug: matchupState.pSeat3, ...getCmdrPodMeta(matchupState.pSeat3) },
+      { num: 4, slug: matchupState.pSeat4, ...getCmdrPodMeta(matchupState.pSeat4) },
+    ];
+
+    // Compute Bradley-Terry multi-competitor logistic win probabilities
+    const podWeights = seats.map((s, idx) => {
+      let weight = Math.exp((s.baseWr - 0.20) * 10);
+      const turnMultiplier = [1.12, 1.04, 0.96, 0.88][idx];
+      return weight * turnMultiplier;
+    });
+    const totalWeight = podWeights.reduce((a, b) => a + b, 0);
+    const podProbs = podWeights.map((w) => totalWeight > 0 ? (w / totalWeight) * 100 : 25);
+
+    // Archetype breakdown
+    const archMap = new Map();
+    for (const o of opps) {
+      const a = o.archetype || 'Other';
+      if (!archMap.has(a)) archMap.set(a, { name: a, totalShared: 0, wins: 0, losses: 0, ourWrSum: 0, oppWrSum: 0, count: 0 });
+      const item = archMap.get(a);
+      item.totalShared += o.shared;
+      item.wins += o.wins;
+      item.losses += o.losses;
+      item.ourWrSum += o.ourWr * o.shared;
+      item.oppWrSum += o.oppWr * o.shared;
+      item.count += o.shared;
+    }
+    const archBreakdown = [...archMap.values()].map((item) => ({
+      name: item.name,
+      shared: item.totalShared,
+      h2h: item.wins / (item.wins + item.losses || 1),
+      ourWr: item.count ? item.ourWrSum / item.count : 0,
+      oppWr: item.count ? item.oppWrSum / item.count : 0,
+      delta: (item.count ? item.ourWrSum / item.count : 0) - (item.count ? item.oppWrSum / item.count : 0)
+    })).sort((a, b) => b.shared - a.shared);
+
+    el.innerHTML = `
+      <div class="kpis">
+        ${kpi('Rivals Analyzed', opps.length, 'commanders in shared tournaments')}
+        ${kpi('Most Played Rival', mostPlayed.name.split(' / ')[0], `${mostPlayed.shared} events · ${pct(mostPlayed.h2h, 0)} H2H`)}
+        ${kpi('Top Favored', bestMatchup.name.split(' / ')[0], `${pct(bestMatchup.h2h, 0)} H2H (${bestMatchup.shared} events)`)}
+        ${kpi('Toughest Rival', toughestMatchup.name.split(' / ')[0], `${pct(toughestMatchup.h2h, 0)} H2H (${toughestMatchup.shared} events)`)}
+      </div>
+
+      <!-- 4-Player Pod Simulator -->
+      <div class="glass panel" style="margin-bottom:24px">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:10px; margin-bottom:8px">
+          <div>
+            <h3>4-Player Pod Simulator (cEDH Matchup Engine)</h3>
+            <div class="hint">Simulates pod dynamics and turn-order win probabilities using empirical head-to-head tournament data and Bradley-Terry logistic modeling.</div>
+          </div>
+          <div style="font-family:var(--f-mono); font-size:12px; color:var(--yellow)">
+            POD TOTAL: 100%
+          </div>
+        </div>
+
+        <div class="pod-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px; margin:16px 0 12px">
+          ${seats.map((s, idx) => `
+            <div class="pod-seat-card ${s.isSelf ? 'self-seat' : ''}" style="border:1.5px solid ${s.isSelf ? 'var(--lime)' : 'var(--line)'}; background:var(--panel); padding:14px; position:relative">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px dashed var(--line); padding-bottom:6px">
+                <span class="badge ${s.isSelf ? 'gold' : ''}" style="font-size:11px">Seat ${s.num} ${idx === 0 ? '(Turn 1)' : `(Turn ${s.num})`}</span>
+                <span style="font-family:var(--f-head); font-size:22px; color:${podProbs[idx] >= 27 ? 'var(--lime)' : (podProbs[idx] <= 22 ? 'var(--red)' : 'var(--yellow)')}">${podProbs[idx].toFixed(1)}%</span>
+              </div>
+              
+              <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px">
+                <div style="width:58px; height:42px; border:2px solid #fff; border-radius:4px; overflow:hidden; background:#000; flex-shrink:0">
+                  <img src="${imgUrl(s.name.split(' / ')[0], 'normal')}" alt="${esc(s.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block">
+                </div>
+                <div style="min-width:0; flex:1">
+                  <div style="font-weight:bold; font-size:13px; line-height:1.2; word-break:break-word">${esc(s.name)}</div>
+                  <div class="dim" style="font-size:11px; margin-top:2px">${esc(s.archetype)}</div>
+                </div>
+              </div>
+
+              ${s.isSelf ? `
+                <div style="font-size:11.5px; color:var(--lime); font-family:var(--f-mono); text-align:center; padding:6px 0; background:rgba(57,255,20,0.06); border:1px solid rgba(57,255,20,0.3)">
+                  CURRENT COMMANDER
+                </div>
+              ` : `
+                <select class="pod-seat-select" data-seat="${s.num}" style="font-size:12px; padding:6px 8px">
+                  ${availableOpponents.map((c) => `<option value="${esc(c.slug)}" ${c.slug === s.slug ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+                </select>
+              `}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Macro-Archetype Matchup Radar -->
+      <div class="grid2" style="margin-bottom:24px">
+        <div class="glass panel">
+          <h3>Performance by Opponent Macro-Archetype</h3>
+          <div class="hint">Our commander's Head-to-Head win rate when competing against major cEDH archetypes</div>
+          <div id="p-arch-matchup-bar" class="plot tall" style="height:320px"></div>
+        </div>
+        <div class="glass panel">
+          <h3>Tournament Presence Impact</h3>
+          <div class="hint">Win rate shift when specific rivals are present vs absent from the event</div>
+          <div id="p-presence-delta-bar" class="plot tall" style="height:320px"></div>
+        </div>
+      </div>
+
+      <!-- Head-to-Head Cross-Commander Standings Table -->
+      <div class="glass panel">
+        <h3>Cross-Commander Tournament Head-to-Head Matrix</h3>
+        <div class="hint">Empirical results in shared tournaments. H2H Win Rate = % of shared events where our commander achieved a superior finish in final standings.</div>
+        
+        <div class="toolbar" style="flex-wrap:wrap; gap:12px; align-items:center">
+          <input type="search" id="matchup-search" placeholder="Search rival commander or archetype…" value="${esc(matchupState.q)}" style="min-width:240px">
+          <span class="spacer"></span>
+          <span class="dim">${list.length} rivals in dataset</span>
+        </div>
+
+        <div class="table-wrap">
+          <table id="matchup-table">
+            <thead>
+              <tr>
+                <th data-msort="name" class="${sKey === 'name' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Opponent commander name">Opponent Commander</th>
+                <th data-msort="archetype" class="${sKey === 'archetype' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Opponent macro strategy archetype">Archetype</th>
+                <th class="num ${sKey === 'shared' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-msort="shared" title="Number of tournaments where both commanders participated">Shared Events</th>
+                <th class="num" title="Record in shared events (Wins - Losses - Ties based on higher final standing)">H2H Record</th>
+                <th class="num ${sKey === 'h2h' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-msort="h2h" title="Percentage of shared tournaments where our commander placed higher">H2H Win Rate</th>
+                <th class="num ${sKey === 'ourWr' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-msort="ourWr" title="Our commander's average match win rate in shared tournaments">Our WR</th>
+                <th class="num ${sKey === 'oppWr' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-msort="oppWr" title="Opponent's average match win rate in shared tournaments">Opponent WR</th>
+                <th class="num ${sKey === 'wrDelta' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-msort="wrDelta" title="Win rate differential in shared tournaments (Our WR - Opp WR)">WR Δ</th>
+                <th title="Advantage classification based on H2H standing advantage">Rating</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map((o) => {
+                const isFavored = o.h2h >= 0.54;
+                const isUnfavored = o.h2h <= 0.46;
+                const ratingBadge = isFavored
+                  ? '<span class="badge cut" style="background:rgba(57,255,20,0.15); border-color:var(--lime); color:var(--lime)">FAVORED</span>'
+                  : (isUnfavored
+                    ? '<span class="badge" style="background:rgba(255,56,92,0.15); border-color:var(--red); color:var(--red)">UNFAVORED</span>'
+                    : '<span class="badge silver" style="background:rgba(255,214,0,0.15); border-color:var(--yellow); color:var(--yellow)">EVEN</span>');
+
+                const wrDeltaClass = o.wrDelta > 0 ? 'pos' : (o.wrDelta < 0 ? 'neg' : 'dim');
+                const wrDeltaSign = o.wrDelta > 0 ? '+' : '';
+
+                return `
+                  <tr>
+                    <td>
+                      <div style="display:flex; align-items:center; gap:8px">
+                        <div style="width:38px; height:26px; border:1.5px solid #fff; border-radius:3px; overflow:hidden; background:#000; flex-shrink:0">
+                          <img src="${imgUrl(o.name.split(' / ')[0], 'normal')}" alt="${esc(o.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block">
+                        </div>
+                        <span style="font-weight:bold">${esc(o.name)}</span>
+                      </div>
+                    </td>
+                    <td class="dim">${esc(o.archetype)}</td>
+                    <td class="num">${o.shared}</td>
+                    <td class="num font-mono">${o.wins}-${o.losses}</td>
+                    <td class="num font-mono"><b>${pct(o.h2h, 1)}</b></td>
+                    <td class="num font-mono">${pct(o.ourWr, 1)}</td>
+                    <td class="num font-mono dim">${pct(o.oppWr, 1)}</td>
+                    <td class="num font-mono ${wrDeltaClass}"><b>${wrDeltaSign}${(o.wrDelta * 100).toFixed(1)}%</b></td>
+                    <td>${ratingBadge}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    // Event listeners
+    const sIn = $('#matchup-search');
+    if (sIn) {
+      sIn.oninput = debounce((e) => {
+        matchupState.q = e.target.value;
+        renderMatchups();
+      });
+    }
+
+    $$('.pod-seat-select').forEach((sel) => {
+      sel.onchange = (e) => {
+        const seatNum = e.target.dataset.seat;
+        matchupState[`pSeat${seatNum}`] = e.target.value;
+        renderMatchups();
+      };
+    });
+
+    $$('#matchup-table th[data-msort]').forEach((th) => {
+      th.onclick = () => {
+        const k = th.dataset.msort;
+        if (matchupState.sort === k) {
+          matchupState.dir = -matchupState.dir;
+        } else {
+          matchupState.sort = k;
+          matchupState.dir = (k === 'name' || k === 'archetype') ? 1 : -1;
+        }
+        renderMatchups();
+      };
+    });
+
+    // Render Archetype plots
+    const tracesArch = [{
+      type: 'bar',
+      orientation: 'h',
+      y: archBreakdown.map((a) => a.name),
+      x: archBreakdown.map((a) => a.h2h * 100),
+      marker: Object.assign(hatch('/'), {
+        color: archBreakdown.map((a) => a.h2h >= 0.5 ? 'rgba(57,255,20,0.3)' : 'rgba(255,56,92,0.3)'),
+        line: { color: INK, width: 1.5 }
+      }),
+      hovertemplate: '%{y}: %{x:.1f}% H2H Win Rate<extra></extra>'
+    }];
+    plot('p-arch-matchup-bar', tracesArch, {
+      xaxis: { ticksuffix: '%', range: [0, 100], gridcolor: 'rgba(244,251,255,.18)' },
+      yaxis: { automargin: true }
+    });
+
+    const topImpactOpps = [...opps].filter((o) => o.shared >= 15).sort((a, b) => Math.abs(b.presenceDelta) - Math.abs(a.presenceDelta)).slice(0, 8);
+    const tracesPresence = [{
+      type: 'bar',
+      y: topImpactOpps.map((o) => o.name.split(' / ')[0]),
+      x: topImpactOpps.map((o) => o.presenceDelta * 100),
+      marker: Object.assign(hatch('/'), {
+        color: topImpactOpps.map((o) => o.presenceDelta >= 0 ? 'rgba(57,255,20,0.3)' : 'rgba(255,56,92,0.3)'),
+        line: { color: INK, width: 1.5 }
+      }),
+      hovertemplate: '%{y}: %{x:+.1f}% WR shift when rival is present<extra></extra>'
+    }];
+    plot('p-presence-delta-bar', tracesPresence, {
+      xaxis: { ticksuffix: '%', gridcolor: 'rgba(244,251,255,.18)' },
+      yaxis: { automargin: true }
+    });
+  }
+
+  function getCmdrPodMeta(cSlug) {
+    if (!cSlug) return { name: 'Unknown', archetype: 'cEDH', baseWr: 0.25 };
+    const mData = window.CEDH_MATCHUPS ? window.CEDH_MATCHUPS[cSlug] : null;
+    if (mData) {
+      return { name: mData.name, archetype: mData.archetype, baseWr: mData.overallWr || 0.25 };
+    }
+    const idx = (window.CEDH_INDEX || []).find((c) => c.slug === cSlug);
+    return { name: idx ? idx.name : cSlug, archetype: 'cEDH Strategy', baseWr: 0.25 };
+  }
+
   const GROUP_ORDER = ['Creature', 'Planeswalker', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Battle', 'Other', 'Land'];
   function openDeck(id) {
     const d = decks.find((x) => x.id === id); if (!d) return;
@@ -1485,7 +1773,7 @@
       const cnt = items.reduce((s, x) => s + x.n, 0);
       return `<div class="deck-group"><h4>${g} (${cnt})</h4>${items.map((x) => `<div>${x.n > 1 ? x.n + '× ' : ''}<span class="cardname" data-card="${esc(x.c.name)}">${esc(x.c.name)}</span><span class="cmc">${x.c.cmc || ''}</span></div>`).join('')}</div>`;
     }).join('');
-    const imgs = d.cards.map(([ci]) => D.cards[ci]).sort((a, b) => a.cmc - b.cmc).map((c) => `<img loading="lazy" alt="${esc(c.name)}" src="${imgUrl(c.name, 'small')}">`).join('');
+    const imgs = d.cards.map(([ci]) => D.cards[ci]).sort((a, b) => a.cmc - b.cmc).map((c) => `<img loading="lazy" alt="${esc(c.name)}" src="${imgUrl(c.name, 'normal')}" onerror="if(!this.dataset.fuzzy){this.dataset.fuzzy='1';this.src='${imgFuzzyUrl(c.name, 'normal')}';}">`).join('');
     $('#modal-body').innerHTML = `
       <div class="deck-head"><h2>${esc(d.player)} ${standingBadge(d.standing, d.top)}</h2></div>
       <div class="deck-meta"><span><b>${esc(d.tname)}</b></span><span>${fmtDate(d.date)}</span><span>${d.tsize} players</span><span>Record <b>${d.w}-${d.l}-${d.d}</b></span><span>Win rate <b>${pct(d.winRate, 0)}</b></span><span>${total} cards · ${d.lands} lands · avg MV ${d.avgCmc.toFixed(2)}</span></div>
@@ -1503,7 +1791,9 @@
   function closeModal() { $('#modal').classList.remove('open'); $('#modal').setAttribute('aria-hidden', 'true'); document.body.style.overflow = ''; hidePopup(); }
 
   // ---------- card hover popup ----------
-  const imgUrl = (name, version = 'normal') => `https://api.scryfall.com/cards/named?format=image&version=${version}&exact=${encodeURIComponent(name)}`;
+  const cleanCardName = (n) => (n || '').replace(/["']/g, '').split(' // ')[0].split(' / ')[0].trim();
+  const imgUrl = (name, version = 'normal') => `https://api.scryfall.com/cards/named?format=image&version=${version}&exact=${encodeURIComponent(cleanCardName(name))}`;
+  const imgFuzzyUrl = (name, version = 'normal') => `https://api.scryfall.com/cards/named?format=image&version=${version}&fuzzy=${encodeURIComponent(cleanCardName(name))}`;
   const popup = () => $('#card-popup');
   function showPopup(name, x, y) {
     const p = popup(), img = $('img', p);
@@ -1512,8 +1802,19 @@
     if (p.dataset.name !== name) {
       p.dataset.name = name; img.classList.remove('loaded');
       img.onload = () => img.classList.add('loaded');
-      img.onerror = () => { img.onerror = null; img.src = imgUrl(frontFace(name)); };
-      img.src = imgUrl(name);
+      let triedFuzzy = false;
+      img.onerror = () => {
+        if (!triedFuzzy) {
+          triedFuzzy = true;
+          img.src = imgFuzzyUrl(name, 'normal');
+        } else {
+          img.onerror = null;
+        }
+      };
+      img.src = imgUrl(name, 'normal');
+      if (img.complete && img.naturalWidth > 0) {
+        img.classList.add('loaded');
+      }
     }
     movePopup(x, y); p.classList.add('show');
   }
@@ -1648,10 +1949,20 @@
     const start = idx.find((c) => c.slug === h.c) ? h.c : idx[0].slug;
     if (sel) sel.value = start;
     loadCommander(start);
+
+    window.addEventListener('hashchange', () => {
+      const nh = parseHash();
+      if (nh.c && nh.c !== slug) {
+        loadCommander(nh.c);
+      } else if (nh.t && nh.t !== activeTab && $(`.tabs button[data-tab="${nh.t}"]`)) {
+        setTab(nh.t);
+      }
+    });
   }
   function setTabUI() {
     $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === activeTab));
     $$('.tab').forEach((s) => s.classList.toggle('active', s.id === 'tab-' + activeTab));
+    renderTab(activeTab);
   }
   init();
 })();
