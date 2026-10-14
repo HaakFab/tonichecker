@@ -27,7 +27,9 @@ Use the exact commander name as on EDHTop16 (partners separated by ` / `). The c
 - **Archetypes** – 2D vector embedding point cloud (t-SNE projection) grouping decks by card composition, cluster focus, signature card differentials, and associated packages
 - **Archetype Trends** – meta share percentage over time, win rates, and top-cut conversion timelines per archetype
 - **Packages (Card N-Grams)** – co-occurrence mining detecting statistically coupled combos, stax packages, and synergy clusters with Lift ratios and $\Delta$ win rates
+- **Matchups & Pod Simulator** – pairwise head-to-head records against all top 32 cEDH commanders, opponent archetype breakdown, and an interactive 4-player pod simulator predicting win probabilities with seat-order weighting
 - **Decks** – sortable tournament lists, interactive deck viewer (list/image view, copy decklist)
 - **Filters** – date, tournament size, finish, win rate, player, tournament, include/exclude cards (shareable via URL)
 - Hover any card name to see its card image popup live from Scryfall with subtle drafting tilt
+- Preloaded with all top 32 cEDH commanders from EDHTop16 with precomputed archetype clustering
 - Works offline directly via `file://` (double-click `index.html`), zero installation required
