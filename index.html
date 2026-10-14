@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ToniChecker: cEDH Analyzer</title>
+  <meta name="description" content="Analyze the performance, card choices and trends of any cEDH commander using EDHTop16 tournament data. No installation needed.">
+  <link rel="icon" type="image/png" href="checkerToni.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Architects+Daughter&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- pencil-wobble filter used on hand-drawn elements -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="pencil"><feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="2.4"/></filter></svg>
+  <div class="bg-orbs" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <img src="checkerToni.png" alt="ToniChecker" class="logo-img">
+      </div>
+      <div>
+        <h1>ToniChecker: cEDH Analyzer</h1>
+        <p id="subtitle">"Aber ich kann kein Excel"</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <label class="select-wrap" for="commander-select">
+        <span>Commander</span>
+        <select id="commander-select"></select>
+      </label>
+      <a class="btn ghost" id="edh-link" href="https://edhtop16.com" target="_blank" rel="noopener">EDHTop16 ↗</a>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="filters glass" id="filters" aria-label="Filters">
+      <div class="filters-head">
+        <h2>Filters</h2>
+        <button class="link-btn" id="reset-filters" type="button">Reset</button>
+      </div>
+      <div class="result-pill" id="result-pill">–</div>
+
+      <div class="fgroup">
+        <label class="flabel">Time period</label>
+        <div class="presets" id="date-presets">
+          <button type="button" data-days="90">3M</button>
+          <button type="button" data-days="180">6M</button>
+          <button type="button" data-days="365">1Y</button>
+          <button type="button" data-days="0" class="active">All</button>
+        </div>
+        <div class="row2">
+          <input type="date" id="f-from" aria-label="From date">
+          <input type="date" id="f-to" aria-label="To date">
+        </div>
+      </div>
+
+      <div class="fgroup">
+        <label class="flabel" for="f-size">Min. tournament size <b id="f-size-val">0</b></label>
+        <input type="range" id="f-size" min="0" max="200" step="5" value="0">
+      </div>
+
+      <div class="fgroup">
+        <label class="flabel" for="f-standing">Finish</label>
+        <select id="f-standing">
+          <option value="all">All finishes</option>
+          <option value="1">Winners only</option>
+          <option value="4">Top 4</option>
+          <option value="16">Top 16</option>
+          <option value="cut">Made top cut</option>
+        </select>
+      </div>
+
+      <div class="fgroup">
+        <label class="flabel" for="f-wr">Min. win rate <b id="f-wr-val">0%</b></label>
+        <input type="range" id="f-wr" min="0" max="100" step="5" value="0">
+      </div>
+
+      <div class="fgroup">
+        <label class="flabel" for="f-player">Player</label>
+        <input type="search" id="f-player" placeholder="Search player…" autocomplete="off">
+      </div>
+      <div class="fgroup">
+        <label class="flabel" for="f-tourn">Tournament</label>
+        <input type="search" id="f-tourn" placeholder="Search tournament…" autocomplete="off">
+      </div>
+
+      <div class="fgroup">
+        <label class="flabel" for="f-inc">Must include card</label>
+        <input type="text" id="f-inc" list="card-list" placeholder="Add card…" autocomplete="off">
+        <div class="chips" id="chips-inc"></div>
+      </div>
+      <div class="fgroup">
+        <label class="flabel" for="f-exc">Must exclude card</label>
+        <input type="text" id="f-exc" list="card-list" placeholder="Add card…" autocomplete="off">
+        <div class="chips" id="chips-exc"></div>
+      </div>
+      <datalist id="card-list"></datalist>
+    </aside>
+
+    <main class="content">
+      <nav class="tabs glass" role="tablist">
+        <button role="tab" class="active" data-tab="overview">Overview</button>
+        <button role="tab" data-tab="cards">Cards</button>
+        <button role="tab" data-tab="trends">Trends</button>
+        <button role="tab" data-tab="archetypes">Archetypes</button>
+        <button role="tab" data-tab="archetype-trends">Archetype Trends</button>
+        <button role="tab" data-tab="packages">Packages</button>
+        <button role="tab" data-tab="decks">Decks</button>
+      </nav>
+
+      <section id="tab-overview" class="tab active"></section>
+      <section id="tab-cards" class="tab"></section>
+      <section id="tab-trends" class="tab"></section>
+      <section id="tab-archetypes" class="tab"></section>
+      <section id="tab-archetype-trends" class="tab"></section>
+      <section id="tab-packages" class="tab"></section>
+      <section id="tab-decks" class="tab"></section>
+      <footer class="foot">
+        <div><small>Subject</small><big id="foot-cmdr">–</big></div>
+        <div><small>Source</small><a href="https://edhtop16.com" target="_blank" rel="noopener">EDHTop16</a> · <a href="https://scryfall.com" target="_blank" rel="noopener">Scryfall</a></div>
+        <div><small>Scale</small><big>1:1</big></div>
+        <div><small>Sheet</small><big id="foot-sheet">1/5</big></div>
+        <div class="note">Not affiliated with Wizards of the Coast. Handle decklists with care.</div>
+        <div><small>Revised</small><span id="foot-date">–</span></div>
+        <div class="hatch"></div>
+      </footer>
+    </main>
+  </div>
+
+  <div id="card-popup" class="card-popup" aria-hidden="true"><div class="shimmer"></div><img alt=""></div>
+  <div id="modal" class="modal" aria-hidden="true"><div class="modal-card glass" role="dialog" aria-modal="true"><button class="modal-close" id="modal-close" aria-label="Close">×</button><div id="modal-body"></div></div></div>
+
+  <noscript>This tool needs JavaScript.</noscript>
+  <script src="lib/plotly-basic.min.js"></script>
+  <script src="data/index.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
