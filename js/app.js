@@ -383,7 +383,7 @@
         size: rp.size || rp.cards.length,
         count: nWith,
         share: nWith / n,
-        lift: rp.lift || 1.0,
+        lift: Math.min(999.0, Math.max(1.0, rp.lift || 1.0)),
         wrWith,
         wrWithout,
         delta,
@@ -1243,10 +1243,16 @@
       return sDir * ((isNaN(x) ? -Infinity : x) - (isNaN(y) ? -Infinity : y));
     });
 
+    const fmtLift = (l) => {
+      if (!l || isNaN(l)) return '–';
+      if (l >= 1000) return '≥1000×';
+      return l.toFixed(1) + '×';
+    };
+
     el.innerHTML = `
       <div class="kpis">
         ${kpi('Discovered Packages', packages.length, 'greedily mined co-dependent tech groups')}
-        ${kpi('Highest Lift Coupling', `${highestLiftPkg.lift ? highestLiftPkg.lift.toFixed(1) + '×' : '–'}`, highestLiftPkg.name.split(' + ')[0] + '…')}
+        ${kpi('Highest Lift Coupling', `${highestLiftPkg && highestLiftPkg.lift ? fmtLift(highestLiftPkg.lift) : '–'}`, highestLiftPkg.name.split(' + ')[0] + '…')}
         ${kpi('Top Win Rate Package', topWrPkg.name.split(' + ')[0] + '…', `${pct(topWrPkg.wrWith, 1)} WR (${topWrPkg.count} decks)`)}
         ${kpi('Most Popular Package', topDecksPkg.name.split(' + ')[0] + '…', `${topDecksPkg.count} decks (${pct(topDecksPkg.share, 0)})`)}
       </div>
@@ -1305,7 +1311,7 @@
                     <td class="num"><span class="badge cut" style="font-size:11px">${p.size} cards</span></td>
                     <td class="num">${p.count}</td>
                     <td class="num">${pct(p.share, 1)}</td>
-                    <td class="num">${p.lift ? p.lift.toFixed(1) + '×' : '–'}</td>
+                    <td class="num">${fmtLift(p.lift)}</td>
                     <td class="num">${f(p.wrWith)}</td>
                     <td class="num">${deltaHtml}</td>
                     <td class="num">${f(p.topWith)}</td>
@@ -1326,7 +1332,7 @@
             <div class="pkg-card">
               <div class="pkg-card-head">
                 <span class="pkg-title">${p.size}-Card Tech Package</span>
-                <span class="badge cut">${p.lift ? p.lift.toFixed(1) + '× Lift' : 'Coupled'}</span>
+                <span class="badge cut">${p.lift ? fmtLift(p.lift) + ' Lift' : 'Coupled'}</span>
               </div>
               <div class="pkg-cards-list">
                 ${p.cards.map((c) => `
@@ -1485,7 +1491,7 @@
               
               <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px">
                 <div style="width:58px; height:42px; border:2px solid #fff; border-radius:4px; overflow:hidden; background:#000; flex-shrink:0">
-                  <img src="${imgUrl(s.name.split(' / ')[0], 'normal')}" alt="${esc(s.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block">
+                  <img src="${imgUrl(cleanCardName(s.name), 'normal')}" alt="${esc(s.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block" onerror="if(!this.dataset.triedFuzzy){this.dataset.triedFuzzy=1;this.src='${imgFuzzyUrl(cleanCardName(s.name), 'normal')}';}">
                 </div>
                 <div style="min-width:0; flex:1">
                   <div style="font-weight:bold; font-size:13px; line-height:1.2; word-break:break-word">${esc(s.name)}</div>
@@ -1565,7 +1571,7 @@
                     <td>
                       <div style="display:flex; align-items:center; gap:8px">
                         <div style="width:38px; height:26px; border:1.5px solid #fff; border-radius:3px; overflow:hidden; background:#000; flex-shrink:0">
-                          <img src="${imgUrl(o.name.split(' / ')[0], 'normal')}" alt="${esc(o.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block">
+                          <img src="${imgUrl(cleanCardName(o.name), 'normal')}" alt="${esc(o.name)}" style="width:100%; height:auto; object-position:top; object-fit:cover; display:block" onerror="if(!this.dataset.triedFuzzy){this.dataset.triedFuzzy=1;this.src='${imgFuzzyUrl(cleanCardName(o.name), 'normal')}';}">
                         </div>
                         <span style="font-weight:bold">${esc(o.name)}</span>
                       </div>
@@ -1759,15 +1765,29 @@
   }
 
   // ---------- Commander Selector Widget & Modal ----------
+  function getCommanderFaces(name) {
+    if (!name) return [];
+    // Double-faced card (contains " // "): ONLY return front face!
+    if (name.includes(' // ')) {
+      return [name.split(' // ')[0].trim()];
+    }
+    // Partner pair (contains " / "): return both partner card names
+    if (name.includes(' / ')) {
+      return name.split(' / ').map((s) => s.trim()).filter(Boolean);
+    }
+    // Single commander
+    return [name.trim()];
+  }
+
   function updateCommanderDisplay(commanderName) {
     const fan = $('#cmdr-cards-display');
     if (!fan || !commanderName) return;
-    const parts = commanderName.split(/\s*\/\s*/);
+    const parts = getCommanderFaces(commanderName);
     const isPartner = parts.length >= 2;
     fan.className = `cmdr-cards-fan ${isPartner ? 'partner' : 'single'}`;
     fan.innerHTML = parts.slice(0, 2).map((name) => `
       <div class="cmdr-card-slice" title="${esc(name)}">
-        <img src="${imgUrl(name, 'normal')}" alt="${esc(name)}" onerror="this.onerror=null;this.src='${imgUrl(frontFace(name), 'normal')}';">
+        <img src="${imgUrl(name, 'normal')}" alt="${esc(name)}" onerror="if(!this.dataset.triedFuzzy){this.dataset.triedFuzzy=1;this.src='${imgFuzzyUrl(name, 'normal')}';}else{this.onerror=null;this.src='${imgUrl(frontFace(name), 'normal')}';}">
       </div>
     `).join('');
   }
@@ -1802,12 +1822,12 @@
     const filteredList = idx.filter((c) => !q || c.name.toLowerCase().includes(q));
 
     grid.innerHTML = filteredList.map((c) => {
-      const parts = c.name.split(/\s*\/\s*/);
+      const parts = getCommanderFaces(c.name);
       const isPartner = parts.length >= 2;
       const isActive = c.slug === slug;
       const fanCards = parts.slice(0, 2).map((name, i) => `
         <div class="cmdr-grid-card" style="${isPartner ? (i === 0 ? 'transform:rotate(-8deg);left:6px;z-index:2;' : 'transform:rotate(8deg);right:6px;z-index:1;') : 'transform:rotate(-3deg);left:10px;'}">
-          <img src="${imgUrl(name, 'small')}" alt="${esc(name)}" loading="lazy" onerror="this.onerror=null;this.src='${imgUrl(frontFace(name), 'small')}';">
+          <img src="${imgUrl(name, 'small')}" alt="${esc(name)}" loading="lazy" onerror="if(!this.dataset.triedFuzzy){this.dataset.triedFuzzy=1;this.src='${imgFuzzyUrl(name, 'small')}';}else{this.onerror=null;this.src='${imgUrl(frontFace(name), 'small')}';}">
         </div>
       `).join('');
 

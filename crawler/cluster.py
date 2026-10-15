@@ -87,6 +87,8 @@ def mine_greedy_packages(cards, decks, archetypes_map=None):
                 if p_c_pkg >= 0.75 and p_pkg_c >= 0.60:
                     current_pkg.append(cand)
                     current_decks = [s for s in current_decks if cand in s]
+                    if len(current_pkg) >= 6:
+                        break
 
         current_pkg.sort()
         key = tuple(current_pkg)
@@ -105,12 +107,13 @@ def mine_greedy_packages(cards, decks, archetypes_map=None):
             wr_without = float(np.mean(wrs_without)) if wrs_without else 0.0
             top_with = sum(1 for i in matching_indices if decks[i].get("top")) / cnt
 
-            # Random chance expectation
+            # Random chance expectation capped at 999.0
             prod_prob = 1.0
             for ci in key:
                 prod_prob *= (card_pop[ci] / num_decks)
             exp_count = prod_prob * num_decks
-            lift = (cnt / exp_count) if exp_count > 0 else 1.0
+            raw_lift = (cnt / exp_count) if exp_count > 0 else 1.0
+            lift = min(999.0, raw_lift)
 
             # Dominant archetype
             dom_arch = "Standard"
@@ -138,21 +141,22 @@ def mine_greedy_packages(cards, decks, archetypes_map=None):
                 "domArch": dom_arch,
             })
 
-    # Subsumption: Keep maximal packages
+    # Subsumption & Overlap Deduplication: Keep maximal, distinct packages
     packages.sort(key=lambda p: (p["size"], p["count"]), reverse=True)
     maximal_packages = []
     for p in packages:
         p_set = set(p["cards"])
-        is_sub = False
+        is_redundant = False
         for mp in maximal_packages:
             mp_set = set(mp["cards"])
-            if p_set.issubset(mp_set) and p["count"] <= mp["count"] * 1.20:
-                is_sub = True
+            overlap = len(p_set & mp_set) / min(len(p_set), len(mp_set))
+            if overlap >= 0.50:
+                is_redundant = True
                 break
-        if not is_sub:
+        if not is_redundant:
             maximal_packages.append(p)
 
-    return maximal_packages[:25]
+    return maximal_packages[:20]
 
 
 def compute_clusters(payload):

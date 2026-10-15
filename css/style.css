@@ -618,7 +618,13 @@ td.wrap { white-space: normal; }
     font-size: 13px;
   }
 
-  /* Tables horizontal scroll with sticky primary column */
+  /* Compact and narrow mobile tables */
+  table {
+    font-size: 11.5px;
+  }
+  th, td {
+    padding: 5px 7px;
+  }
   .table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -631,6 +637,58 @@ td.wrap { white-space: normal; }
     background: var(--blue-deep);
     z-index: 2;
     box-shadow: 2px 0 5px rgba(0,0,0,0.4);
+    max-width: 125px;
+    min-width: 85px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cardname {
+    display: inline-block;
+    max-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+  }
+  .bar {
+    width: 50px;
+    height: 11px;
+  }
+  .bar span {
+    font-size: 9.5px;
+  }
+  .pkg-tag {
+    padding: 1px 3px;
+    font-size: 9.5px;
+  }
+  .insig-tag {
+    font-size: 8.5px;
+  }
+
+  /* Specific column width adjustments on mobile */
+  #decks-table th:first-child,
+  #decks-table td:first-child,
+  #t-winners th:first-child,
+  #t-winners td:first-child {
+    max-width: 75px;
+  }
+  #t-players th:first-child,
+  #t-players td:first-child {
+    max-width: 105px;
+  }
+  #matchup-table th:first-child,
+  #matchup-table td:first-child {
+    max-width: 125px;
+  }
+  #tab-packages .table-wrap th:first-child,
+  #tab-packages .table-wrap td:first-child {
+    max-width: 150px;
+    white-space: normal;
+  }
+  #tab-packages .cardname {
+    max-width: 100%;
+    white-space: normal;
   }
 
   .grid2, .two-tables {
