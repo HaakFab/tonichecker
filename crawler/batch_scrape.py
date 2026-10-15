@@ -6,6 +6,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from crawl import API, crawl, normalize, slugify, write, rebuild_index
 from cluster import compute_clusters
 
