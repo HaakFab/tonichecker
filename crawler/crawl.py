@@ -113,7 +113,7 @@ def normalize(cmdr, entries):
 def rebuild_index():
     index = []
     for f in sorted(DATA_DIR.glob("*.js")):
-        if f.name == "index.js":
+        if f.name in ("index.js", "matchups.js"):
             continue
         try:
             head = f.read_text(encoding="utf-8")[:4000]

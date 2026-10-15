@@ -1798,7 +1798,10 @@
     renderCommanderGrid();
     modal.classList.add('open');
     modal.setAttribute('aria-hidden', 'false');
-    document.body.style.overflow = 'hidden';
+    const hint = modal.querySelector('.modal-head .hint');
+    if (hint && window.CEDH_INDEX) {
+      hint.textContent = `Choose from ${window.CEDH_INDEX.length} top cEDH tournament commanders (offline library)`;
+    }
     const input = $('#cmdr-search-input');
     if (input) {
       input.value = '';
