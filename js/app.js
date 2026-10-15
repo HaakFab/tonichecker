@@ -119,6 +119,11 @@
       return true;
     });
     $('#result-pill').innerHTML = `<b>${filtered.length.toLocaleString()}</b> of ${decks.length.toLocaleString()} decks`;
+    const mfc = $('#mobile-filter-count');
+    if (mfc) {
+      const isFiltered = (filtered.length !== decks.length);
+      mfc.textContent = isFiltered ? `(${filtered.length})` : '';
+    }
     writeHash();
     limits.cards = 150; limits.decks = 100;
     renderTab(activeTab);
@@ -303,197 +308,95 @@
   }
   const kpi = (l, v, s) => `<div class="glass kpi"><div class="k-label">${l}</div><div class="k-value">${v}</div><div class="k-sub">${s}</div></div>`;
 
-  // ---------- Packages & N-grams (Co-occurrence mining up to N=6) ----------
+  // ---------- Packages & N-grams (Precomputed Greedy Tech Packages) ----------
   function getPackages(deckList) {
     if (!D || !deckList || !deckList.length) return { packages: [], cardPkgMap: new Map() };
+    const rawPackages = D.packages || [];
+    const archetypes = D.archetypes || [];
     const n = deckList.length;
-    if (n < 10) return { packages: [], cardPkgMap: new Map() };
+    const isUnfiltered = (decks && n === decks.length);
 
-    const cardCounts = new Int32Array(D.cards.length);
-    for (const d of deckList) {
-      for (const i of d.set) cardCounts[i]++;
-    }
-
-    // Filter candidate cards: between 1.5% and 92% inclusion
-    const minCount = Math.max(5, Math.round(n * 0.015));
-    const maxCount = Math.round(n * 0.92);
-    const candidateIdxs = [];
-    for (let i = 0; i < D.cards.length; i++) {
-      if (cardCounts[i] >= minCount && cardCounts[i] <= maxCount) candidateIdxs.push(i);
-    }
-
-    // Pairwise co-occurrence
-    const pairCount = new Map();
-    for (const d of deckList) {
-      const active = [];
-      for (const i of candidateIdxs) if (d.set.has(i)) active.push(i);
-      for (let a = 0; a < active.length; a++) {
-        const ia = active[a];
-        for (let b = a + 1; b < active.length; b++) {
-          const ib = active[b];
-          const k = ia < ib ? ia * 100000 + ib : ib * 100000 + ia;
-          pairCount.set(k, (pairCount.get(k) || 0) + 1);
+    // Cache package card indices once per commander
+    if (!D._pkgIdxCache || D._pkgIdxCacheKey !== D.commander) {
+      D._pkgIdxCacheKey = D.commander;
+      D._pkgIdxCache = rawPackages.map((p) => {
+        const idxs = [];
+        for (const cName of p.cards) {
+          const idx = D.cards.findIndex((c) => c.name.toLowerCase() === cName.toLowerCase());
+          if (idx >= 0) idxs.push(idx);
         }
-      }
-    }
-
-    // Statistically coupled pairs (chi-square >= 9.5, lift >= 1.25, count >= minCount)
-    const pairs = [];
-    const adj = new Map();
-    for (const [k, nab] of pairCount.entries()) {
-      if (nab < minCount) continue;
-      const ia = Math.floor(k / 100000);
-      const ib = k % 100000;
-      const na = cardCounts[ia], nb = cardCounts[ib];
-      const expected = (na * nb) / n;
-      const lift = nab / expected;
-      if (lift < 1.25) continue;
-
-      const denom = Math.sqrt(na * (n - na) * nb * (n - nb));
-      if (!denom) continue;
-      const phi = (n * nab - na * nb) / denom;
-      const chi2 = n * phi * phi;
-      if (chi2 >= 9.5) {
-        pairs.push({ ia, ib, nab, lift, phi });
-        if (!adj.has(ia)) adj.set(ia, new Set());
-        if (!adj.has(ib)) adj.set(ib, new Set());
-        adj.get(ia).add(ib);
-        adj.get(ib).add(ia);
-      }
-    }
-
-    // Mine cliques up to size 6
-    let currentCliques = pairs.map((p) => ({ cards: [Math.min(p.ia, p.ib), Math.max(p.ia, p.ib)], count: p.nab, size: 2, lift: p.lift }));
-    const allCliques = [...currentCliques];
-
-    for (let sz = 3; sz <= 6; sz++) {
-      const nextCliques = [];
-      const seen = new Set();
-      for (const cq of currentCliques) {
-        const cCards = cq.cards;
-        const firstAdj = adj.get(cCards[0]);
-        if (!firstAdj) continue;
-        for (const cand of firstAdj) {
-          if (cCards.includes(cand)) continue;
-          if (cand < cCards[cCards.length - 1]) continue;
-
-          let ok = true;
-          for (let i = 1; i < cCards.length; i++) {
-            const cadj = adj.get(cCards[i]);
-            if (!cadj || !cadj.has(cand)) { ok = false; break; }
-          }
-          if (!ok) continue;
-
-          const newCards = [...cCards, cand];
-          const key = newCards.join('-');
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          let count = 0;
-          for (const d of deckList) {
-            let hasAll = true;
-            for (const ci of newCards) if (!d.set.has(ci)) { hasAll = false; break; }
-            if (hasAll) count++;
-          }
-          if (count >= minCount) {
-            let prodProb = 1.0;
-            for (const ci of newCards) prodProb *= (cardCounts[ci] / n);
-            const expectedDecks = prodProb * n;
-            const lift = expectedDecks > 0 ? count / expectedDecks : 1.0;
-            const item = { cards: newCards, count, size: sz, lift };
-            nextCliques.push(item);
-            allCliques.push(item);
-          }
-        }
-      }
-      if (!nextCliques.length) break;
-      currentCliques = nextCliques;
-    }
-
-    // Subsumption check (detect when a smaller sub-package is covered by a larger one)
-    allCliques.sort((a, b) => b.size - a.size || b.count - a.count);
-    for (let i = 0; i < allCliques.length; i++) {
-      const ci = allCliques[i];
-      ci.isSub = false;
-      for (let j = 0; j < i; j++) {
-        const cj = allCliques[j];
-        if (cj.size > ci.size && ci.cards.every((c) => cj.cards.includes(c))) {
-          if (cj.count >= ci.count * 0.82) {
-            ci.isSub = true;
-            ci.parentName = cj.cards.map((c) => D.cards[c].name).join(' + ');
-            break;
-          }
-        }
-      }
+        return idxs;
+      });
     }
 
     const packages = [];
     const cardPkgMap = new Map();
-    const archetypes = D.archetypes || [];
 
-    for (let id = 0; id < allCliques.length; id++) {
-      const rp = allCliques[id];
-      const cardNames = rp.cards.map((i) => D.cards[i].name);
-      const withDecks = [], withoutDecks = [];
-      for (const d of deckList) {
-        let hasAll = true;
-        for (const ci of rp.cards) if (!d.set.has(ci)) { hasAll = false; break; }
-        if (hasAll) withDecks.push(d); else withoutDecks.push(d);
+    for (let id = 0; id < rawPackages.length; id++) {
+      const rp = rawPackages[id];
+      const cardIdxs = D._pkgIdxCache[id] || [];
+      if (!cardIdxs.length) continue;
+
+      let nWith = 0;
+      let withDecks = [];
+      let withoutDecks = [];
+
+      if (isUnfiltered && rp.count !== undefined) {
+        nWith = rp.count;
+      } else {
+        for (const d of deckList) {
+          let hasAll = true;
+          for (const ci of cardIdxs) {
+            if (!d.set.has(ci)) { hasAll = false; break; }
+          }
+          if (hasAll) withDecks.push(d); else withoutDecks.push(d);
+        }
+        nWith = withDecks.length;
       }
-      const nWith = withDecks.length, nWithout = withoutDecks.length;
-      if (nWith < 4) continue;
 
-      const wrWith = mean(withDecks.map((d) => d.winRate));
-      const wrWithout = nWithout ? mean(withoutDecks.map((d) => d.winRate)) : 0;
-      const topWith = withDecks.filter((d) => d.top).length / nWith;
-      const topWithout = nWithout ? withoutDecks.filter((d) => d.top).length / nWithout : 0;
-      const delta = wrWith - wrWithout;
+      if (nWith < 3) continue;
+
+      let wrWith = rp.wrWith || 0;
+      let wrWithout = rp.wrWithout || 0;
+      let topWith = rp.topWith || 0;
+      let delta = rp.delta || 0;
+
+      if (!isUnfiltered && withDecks.length) {
+        wrWith = mean(withDecks.map((d) => d.winRate));
+        wrWithout = withoutDecks.length ? mean(withoutDecks.map((d) => d.winRate)) : 0;
+        topWith = withDecks.filter((d) => d.top).length / nWith;
+        delta = wrWith - wrWithout;
+      }
 
       let sig = false, z = 0;
-      if (nWith >= 15 && nWithout >= 15) {
-        const pP = (nWith * wrWith + nWithout * wrWithout) / n;
-        const se = Math.sqrt(pP * (1 - pP) * (1 / nWith + 1 / nWithout));
+      if (nWith >= 15 && (n - nWith) >= 15) {
+        const pP = (nWith * wrWith + (n - nWith) * wrWithout) / n;
+        const se = Math.sqrt(pP * (1 - pP) * (1 / nWith + 1 / (n - nWith)));
         if (se > 0) { z = Math.abs(delta) / se; sig = z >= 1.96; }
-      }
-
-      let domArch = '–';
-      if (archetypes.length) {
-        const archCounts = new Map();
-        for (const d of withDecks) archCounts.set(d.c, (archCounts.get(d.c) || 0) + 1);
-        let maxC = 0, bestA = null;
-        for (const [aid, c] of archCounts.entries()) if (c > maxC) { maxC = c; bestA = aid; }
-        if (bestA !== null && archetypes[bestA]) {
-          domArch = `${archetypes[bestA].name} (${(maxC / nWith * 100).toFixed(0)}%)`;
-        }
       }
 
       const pObj = {
         id,
-        name: cardNames.join(' + '),
-        cards: cardNames,
-        cardIdxs: rp.cards,
-        size: rp.size,
-        isSub: rp.isSub,
-        parentName: rp.parentName || '',
+        name: rp.name,
+        cards: rp.cards,
+        cardIdxs,
+        size: rp.size || rp.cards.length,
         count: nWith,
         share: nWith / n,
-        lift: rp.lift,
+        lift: rp.lift || 1.0,
         wrWith,
         wrWithout,
         delta,
         sig,
         z,
         topWith,
-        topWithout,
-        domArch,
+        domArch: rp.domArch || 'Standard',
       };
       packages.push(pObj);
 
-      if (!rp.isSub) {
-        for (const ci of rp.cards) {
-          if (!cardPkgMap.has(ci)) cardPkgMap.set(ci, []);
-          cardPkgMap.get(ci).push(pObj);
-        }
+      for (const ci of cardIdxs) {
+        if (!cardPkgMap.has(ci)) cardPkgMap.set(ci, []);
+        cardPkgMap.get(ci).push(pObj);
       }
     }
 
@@ -544,7 +447,7 @@
     return { rows, n, wrAll, topAll, packages, cardPkgMap };
   }
 
-  const cardState = { q: '', type: 'all', hideStaples: true };
+  const cardState = { q: '', type: 'all', hideStaples: true, hideNiche: false, hideJank: false };
   function renderCards() {
     const el = $('#tab-cards');
     if (!filtered.length) { el.innerHTML = noData(); return; }
@@ -558,7 +461,9 @@
           <div class="toolbar">
             <input type="search" id="c-q" placeholder="Search cards…" value="${esc(cardState.q)}">
             <select id="c-type">${types.map((t) => `<option value="${t}">${t === 'all' ? 'All types' : t}</option>`).join('')}</select>
-            <label class="chk"><input type="checkbox" id="c-staples" ${cardState.hideStaples ? 'checked' : ''}> Hide staples (≥ 95%)</label>
+            <label class="chk" title="Exclude ubiquitous staples played in virtually every deck (≥ 95% inclusion)"><input type="checkbox" id="c-staples" ${cardState.hideStaples ? 'checked' : ''}> Hide staples (≥ 95%)</label>
+            <label class="chk" title="Exclude niche tech cards appearing in 5% or fewer decks (≤ 5% inclusion)"><input type="checkbox" id="c-niche" ${cardState.hideNiche ? 'checked' : ''}> Hide niche (≤ 5%)</label>
+            <label class="chk" title="Exclude rarely registered jank appearing in 3% or fewer decks (≤ 3% inclusion)"><input type="checkbox" id="c-jank" ${cardState.hideJank ? 'checked' : ''}> Hide jank (≤ 3%)</label>
             <span class="spacer"></span><span class="dim" id="c-count"></span>
           </div>
           <div class="table-wrap"><table id="cards-table"><thead></thead><tbody></tbody></table></div>
@@ -567,11 +472,20 @@
       $('#c-q').addEventListener('input', debounce((e) => { cardState.q = e.target.value; limits.cards = 150; renderCards(); }));
       $('#c-type').addEventListener('change', (e) => { cardState.type = e.target.value; limits.cards = 150; renderCards(); });
       $('#c-staples').addEventListener('change', (e) => { cardState.hideStaples = e.target.checked; limits.cards = 150; renderCards(); });
+      $('#c-niche').addEventListener('change', (e) => { cardState.hideNiche = e.target.checked; limits.cards = 150; renderCards(); });
+      $('#c-jank').addEventListener('change', (e) => { cardState.hideJank = e.target.checked; limits.cards = 150; renderCards(); });
     }
     $('#c-type').value = types.includes(cardState.type) ? cardState.type : 'all';
 
     const q = cardState.q.toLowerCase();
-    let list = rows.filter((r) => (!q || r.name.toLowerCase().includes(q)) && (cardState.type === 'all' || r.type === cardState.type) && (!cardState.hideStaples || r.inclusion < 0.95));
+    let list = rows.filter((r) => {
+      if (q && !r.name.toLowerCase().includes(q)) return false;
+      if (cardState.type !== 'all' && r.type !== cardState.type) return false;
+      if (cardState.hideStaples && r.inclusion >= 0.95) return false;
+      if (cardState.hideNiche && r.inclusion <= 0.05) return false;
+      if (cardState.hideJank && r.inclusion <= 0.03) return false;
+      return true;
+    });
     const { key, dir } = sortState.cards;
     list.sort((a, b) => {
       const x = a[key], y = b[key];
@@ -726,7 +640,7 @@
   }
 
   // ---------- Archetypes ----------
-  const archState = { selected: null, colorBy: 'archetype', viewMode: 'dim' };
+  const archState = { selected: null, colorBy: 'archetype', viewMode: 'dim', dimCore: false };
 
   function renderArchetypes() {
     const el = $('#tab-archetypes');
@@ -772,6 +686,10 @@
                 <option value="hide" ${archState.viewMode === 'hide' ? 'selected' : ''}>Hide</option>
               </select>
             </label>
+            <label class="chk" title="Dim the consensus standard build to highlight divergent tech variants and outlier clusters" style="font-size:12px; margin-left:12px; display:inline-flex; align-items:center; gap:5px">
+              <input type="checkbox" id="a-dim-core" ${archState.dimCore ? 'checked' : ''}>
+              Highlight Tech Variants (Dim Standard Build)
+            </label>
             ${!isAll ? '<button class="btn" id="a-clear-filter" style="font-size:11.5px; padding:4px 10px; margin-left:8px">Show All</button>' : ''}
           </div>
         </div>
@@ -802,7 +720,10 @@
                   <span class="arch-dot" style="background:${color}"></span>
                   <span>${esc(a.name)}</span>
                 </div>
-                <span class="badge ${isSelected ? 'gold' : ''}" style="font-size:11px">${count} decks</span>
+                <div style="display:flex; align-items:center; gap:6px">
+                  ${a.isCore ? '<span class="badge gold" style="font-size:10px" title="Consensus baseline decklist configuration (>65% staple core overlap)">STANDARD BUILD</span>' : '<span class="badge cut" style="font-size:10px" title="Divergent tech variant exploring distinct package synergies">TECH VARIANT</span>'}
+                  <span class="badge ${isSelected ? 'gold' : ''}" style="font-size:11px">${count} decks</span>
+                </div>
               </div>
               <div class="arch-stats">
                 <span>Filtered: <b>${count}</b> (${pctFiltered.toFixed(1)}%)</span>
@@ -838,6 +759,8 @@
 
     $('#a-colorby').onchange = (e) => { archState.colorBy = e.target.value; drawScatter(); };
     $('#a-viewmode').onchange = (e) => { archState.viewMode = e.target.value; drawScatter(); };
+    const dimCoreChk = $('#a-dim-core');
+    if (dimCoreChk) dimCoreChk.onchange = (e) => { archState.dimCore = e.target.checked; drawScatter(); };
     const clearBtn = $('#a-clear-filter');
     if (clearBtn) clearBtn.onclick = () => { archState.selected = null; renderArchetypes(); };
 
@@ -900,6 +823,15 @@
         const symbols = archDecks.map((d) => (d.standing === 1 ? 'star' : (d.top ? 'square' : 'circle')));
         const sizes = archDecks.map((d) => (d.standing === 1 ? 14 : (d.top ? 9.5 : 7.5)));
 
+        let baseOpacity = isHighlighted ? 0.96 : 0.12;
+        let lineCol = isHighlighted ? '#031c36' : 'transparent';
+        let lineW = isHighlighted ? 1.4 : 0;
+        if (archState.dimCore && arch.isCore) {
+          baseOpacity = 0.08;
+          lineCol = 'transparent';
+          lineW = 0.5;
+        }
+
         traces.push({
           type: 'scattergl',
           mode: 'markers',
@@ -913,8 +845,8 @@
             size: sizes,
             symbol: symbols,
             color: archColor,
-            opacity: isHighlighted ? 0.96 : 0.12,
-            line: { width: 1.4, color: isHighlighted ? '#031c36' : 'transparent' },
+            opacity: baseOpacity,
+            line: { width: lineW, color: lineCol },
           },
         });
       });
@@ -1279,14 +1211,14 @@
   }
 
   // ---------- Packages & N-Grams Tab ----------
-  const pkgState = { q: '', size: 'all', hideSub: true, sort: 'count', dir: -1 };
+  const pkgState = { q: '', minSize: 'all', sort: 'lift', dir: -1 };
   function renderPackages() {
     const el = $('#tab-packages');
     if (!filtered.length) { el.innerHTML = noData(); return; }
 
     const { packages } = getPackages(filtered);
     if (!packages.length) {
-      el.innerHTML = '<div class="glass empty"><h3>No statistically coupled packages found</h3><p>Try widening your filters to increase sample size for co-occurrence detection.</p></div>';
+      el.innerHTML = '<div class="glass empty"><h3>No statistically coupled tech packages found</h3><p>Try relaxing filters or selecting an active commander with multiple tournament decks.</p></div>';
       return;
     }
 
@@ -1297,8 +1229,9 @@
 
     const q = (pkgState.q || '').toLowerCase();
     let list = packages.filter((p) => {
-      if (pkgState.hideSub && p.isSub) return false;
-      if (pkgState.size !== 'all' && p.size !== +pkgState.size) return false;
+      if (pkgState.minSize === '2' && p.size !== 2) return false;
+      if (pkgState.minSize === '3' && p.size < 3) return false;
+      if (pkgState.minSize === '4' && p.size < 4) return false;
       if (q && !p.name.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -1312,39 +1245,26 @@
 
     el.innerHTML = `
       <div class="kpis">
-        ${kpi('Detected Packages', packages.length, 'statistically coupled N-grams (N=2..6)')}
-        ${kpi('Most Popular', topDecksPkg.name.split(' + ')[0] + '…', `${topDecksPkg.count} decks (${pct(topDecksPkg.share, 0)})`)}
-        ${kpi('Top Win Rate', topWrPkg.name.split(' + ')[0] + '…', `${pct(topWrPkg.wrWith, 1)} WR (${topWrPkg.count} decks)`)}
-        ${kpi('Max Lift Ratio', `${highestLiftPkg.lift ? highestLiftPkg.lift.toFixed(1) + '×' : '–'}`, 'coupling over expectation')}
+        ${kpi('Discovered Packages', packages.length, 'greedily mined co-dependent tech groups')}
+        ${kpi('Highest Lift Coupling', `${highestLiftPkg.lift ? highestLiftPkg.lift.toFixed(1) + '×' : '–'}`, highestLiftPkg.name.split(' + ')[0] + '…')}
+        ${kpi('Top Win Rate Package', topWrPkg.name.split(' + ')[0] + '…', `${pct(topWrPkg.wrWith, 1)} WR (${topWrPkg.count} decks)`)}
+        ${kpi('Most Popular Package', topDecksPkg.name.split(' + ')[0] + '…', `${topDecksPkg.count} decks (${pct(topDecksPkg.share, 0)})`)}
       </div>
 
       <div class="glass panel" style="margin-bottom:24px">
-        <h3>Card Packages &amp; Co-Occurrence N-Grams</h3>
-        <div class="hint">Synergistic card clusters that appear together significantly more than random chance (χ² p &lt; 0.001, Lift &gt; 1.25×). Sub-packages can be collapsed into their superset engines.</div>
+        <h3>Greedy Maximal Tech Packages</h3>
+        <div class="hint">Sets of non-staple cards that are almost never registered without each other (≥ 75% mutual co-dependence). Explores tight combos, tutor engines, and distinct niche-y tech packages.</div>
         <div class="toolbar" style="flex-wrap:wrap; gap:12px; align-items:center">
-          <input type="search" id="pkg-search" placeholder="Search cards in packages…" value="${esc(pkgState.q)}" style="min-width:200px">
+          <input type="search" id="pkg-search" placeholder="Search cards in packages…" value="${esc(pkgState.q)}" style="min-width:220px">
           
           <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-dim)">
-            SIZE N:
-            <select id="pkg-size" style="width:auto">
-              <option value="all" ${pkgState.size === 'all' ? 'selected' : ''}>All sizes (N=2–6)</option>
-              <option value="2" ${pkgState.size === '2' ? 'selected' : ''}>N = 2 (Synergy Pairs)</option>
-              <option value="3" ${pkgState.size === '3' ? 'selected' : ''}>N = 3 (Triples)</option>
-              <option value="4" ${pkgState.size === '4' ? 'selected' : ''}>N = 4 (Core Engines)</option>
-              <option value="5" ${pkgState.size === '5' ? 'selected' : ''}>N = 5 (5-Card Lines)</option>
-              <option value="6" ${pkgState.size === '6' ? 'selected' : ''}>N = 6 (6-Card Suites)</option>
+            FILTER:
+            <select id="pkg-min-size" style="width:auto">
+              <option value="all" ${pkgState.minSize === 'all' ? 'selected' : ''}>All Tech Packages</option>
+              <option value="3" ${pkgState.minSize === '3' ? 'selected' : ''}>Size ≥ 3 (Multi-Card Lines)</option>
+              <option value="4" ${pkgState.minSize === '4' ? 'selected' : ''}>Size ≥ 4 (Deep Engines)</option>
+              <option value="2" ${pkgState.minSize === '2' ? 'selected' : ''}>Size = 2 (Tight Tech Pairs)</option>
             </select>
-          </label>
-
-          <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--ink-dim)">
-            SLIDER:
-            <input type="range" id="pkg-slider" min="2" max="6" value="${pkgState.size === 'all' ? 3 : pkgState.size}" style="width:80px; vertical-align:middle">
-            <span id="pkg-slider-label" style="font-family:var(--f-mono); color:var(--cyan); min-width:40px">${pkgState.size === 'all' ? 'All' : `N=${pkgState.size}`}</span>
-          </label>
-
-          <label class="chk" title="When a 3+ card engine is found (e.g. Underworld Breach + Brain Freeze + LED), hide the smaller 2-card sub-pairs that are already part of it">
-            <input type="checkbox" id="pkg-hidesub" ${pkgState.hideSub ? 'checked' : ''}>
-            Hide redundant sub-packages
           </label>
 
           <span class="spacer"></span>
@@ -1355,14 +1275,14 @@
           <table>
             <thead>
               <tr>
-                <th data-pkg-sort="name" class="${sKey === 'name' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Synergistic card group appearing together significantly more than random expectation">Package (N-Gram Cards)</th>
-                <th class="num ${sKey === 'size' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="size" title="Number of coupled cards in this package (N = 2 to 6)">Size</th>
-                <th class="num ${sKey === 'count' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="count" title="Number of decklists containing every card in this package">Decks</th>
-                <th class="num ${sKey === 'share' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="share" title="Percentage of all filtered decks running this entire package">Share</th>
-                <th class="num ${sKey === 'lift' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="lift" title="Lift ratio: observed frequency divided by expected random chance (>1.0 = positive synergy)">Lift Ratio</th>
-                <th class="num ${sKey === 'wrWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="wrWith" title="Average match win rate of decks containing all cards in this package">WR with Pack</th>
+                <th data-pkg-sort="name" class="${sKey === 'name' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Synergistic non-staple card group appearing together significantly more than random expectation (≥ 75% mutual co-occurrence)">Tech Package (Co-dependent Cards)</th>
+                <th class="num ${sKey === 'size' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="size" title="Number of coupled cards in this greedy package">Size</th>
+                <th class="num ${sKey === 'count' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="count" title="Number of tournament decklists containing all cards in this package">Decks</th>
+                <th class="num ${sKey === 'share' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="share" title="Percentage of filtered decks running this entire package">Share</th>
+                <th class="num ${sKey === 'lift' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="lift" title="Lift ratio: observed frequency divided by expected random chance (> 1.0 = positive synergy, higher = tighter coupling)">Lift Ratio</th>
+                <th class="num ${sKey === 'wrWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="wrWith" title="Average tournament match win rate of decks playing this complete package">WR with Pack</th>
                 <th class="num ${sKey === 'delta' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="delta" title="Win rate difference compared to decks missing one or more package cards (insig. if sample is small or p ≥ 0.05)">Δ Win Rate</th>
-                <th class="num ${sKey === 'topWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="topWith" title="Percentage of decks with this package that reached tournament top-cut">Top-Cut Rate</th>
+                <th class="num ${sKey === 'topWith' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" data-pkg-sort="topWith" title="Percentage of decks with this package that reached tournament top-cut playoffs">Top-Cut Rate</th>
                 <th data-pkg-sort="domArch" class="${sKey === 'domArch' ? 'sorted' + (sDir > 0 ? ' asc' : '') : ''}" title="Primary archetype cluster where this package is most heavily utilized">Primary Archetype</th>
               </tr>
             </thead>
@@ -1375,20 +1295,17 @@
                   ? `<span class="${p.delta > 0 ? 'pos' : 'neg'}" title="Statistically significant (z=${p.z.toFixed(2)}, p < 0.05)">${deltaFormatted}</span>`
                   : `<span class="delta-insig dim" title="z=${p.z.toFixed(2)}">${deltaFormatted} <small class="insig-tag">insig.</small></span>`;
 
-                const subNotice = p.isSub ? `<span class="dim" style="font-size:10px; display:block">sub-pack of: ${esc(p.parentName)}</span>` : '';
-
                 return `
                   <tr>
                     <td>
                       <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center">
                         ${p.cards.map((c) => `<span class="cardname" data-card="${esc(c)}">${esc(c)}</span>`).join(' <span class="dim">+</span> ')}
                       </div>
-                      ${subNotice}
                     </td>
-                    <td class="num"><span class="badge cut" style="font-size:11px">${p.size}-gram</span></td>
+                    <td class="num"><span class="badge cut" style="font-size:11px">${p.size} cards</span></td>
                     <td class="num">${p.count}</td>
                     <td class="num">${pct(p.share, 1)}</td>
-                    <td class="num">${p.lift ? p.lift.toFixed(2) + '×' : '–'}</td>
+                    <td class="num">${p.lift ? p.lift.toFixed(1) + '×' : '–'}</td>
                     <td class="num">${f(p.wrWith)}</td>
                     <td class="num">${deltaHtml}</td>
                     <td class="num">${f(p.topWith)}</td>
@@ -1402,13 +1319,13 @@
       </div>
 
       <div class="glass panel">
-        <h3>Package Schematic Cards</h3>
-        <div class="hint">Detailed component view of top packages</div>
+        <h3>Top Package Schematic Cards</h3>
+        <div class="hint">Detailed component view of highest-synergy tech packages</div>
         <div class="pkg-grid">
           ${list.slice(0, 9).map((p) => `
             <div class="pkg-card">
               <div class="pkg-card-head">
-                <span class="pkg-title">${p.size}-Card Package</span>
+                <span class="pkg-title">${p.size}-Card Tech Package</span>
                 <span class="badge cut">${p.lift ? p.lift.toFixed(1) + '× Lift' : 'Coupled'}</span>
               </div>
               <div class="pkg-cards-list">
@@ -1437,28 +1354,10 @@
         renderPackages();
       });
     }
-    const szSel = $('#pkg-size');
-    if (szSel) {
-      szSel.onchange = (e) => {
-        pkgState.size = e.target.value;
-        const sl = $('#pkg-slider');
-        if (sl && e.target.value !== 'all') sl.value = e.target.value;
-        renderPackages();
-      };
-    }
-    const slIn = $('#pkg-slider');
-    if (slIn) {
-      slIn.oninput = (e) => {
-        pkgState.size = e.target.value;
-        const sel = $('#pkg-size');
-        if (sel) sel.value = e.target.value;
-        renderPackages();
-      };
-    }
-    const hsChk = $('#pkg-hidesub');
-    if (hsChk) {
-      hsChk.onchange = (e) => {
-        pkgState.hideSub = e.target.checked;
+    const msSel = $('#pkg-min-size');
+    if (msSel) {
+      msSel.onchange = (e) => {
+        pkgState.minSize = e.target.value;
         renderPackages();
       };
     }
@@ -1791,24 +1690,40 @@
   function closeModal() { $('#modal').classList.remove('open'); $('#modal').setAttribute('aria-hidden', 'true'); document.body.style.overflow = ''; hidePopup(); }
 
   // ---------- card hover popup ----------
-  const cleanCardName = (n) => (n || '').replace(/["']/g, '').split(' // ')[0].split(' / ')[0].trim();
+  const cleanCardName = (n) => (n || '').split(' // ')[0].split(' / ')[0].trim();
   const imgUrl = (name, version = 'normal') => `https://api.scryfall.com/cards/named?format=image&version=${version}&exact=${encodeURIComponent(cleanCardName(name))}`;
   const imgFuzzyUrl = (name, version = 'normal') => `https://api.scryfall.com/cards/named?format=image&version=${version}&fuzzy=${encodeURIComponent(cleanCardName(name))}`;
   const popup = () => $('#card-popup');
   function showPopup(name, x, y) {
-    const p = popup(), img = $('img', p);
+    const p = popup(), img = $('img', p), fb = $('#popup-fallback');
+    if (!p) return;
     const rot = (Math.random() * 3.0 - 1.5).toFixed(2);
     p.style.setProperty('--popup-rot', rot + 'deg');
     if (p.dataset.name !== name) {
-      p.dataset.name = name; img.classList.remove('loaded');
-      img.onload = () => img.classList.add('loaded');
+      p.dataset.name = name;
+      img.classList.remove('loaded');
+      img.style.display = 'block';
+      if (fb) fb.style.display = 'none';
+
       let triedFuzzy = false;
+      img.onload = () => {
+        img.classList.add('loaded');
+        if (fb) fb.style.display = 'none';
+      };
       img.onerror = () => {
         if (!triedFuzzy) {
           triedFuzzy = true;
           img.src = imgFuzzyUrl(name, 'normal');
         } else {
           img.onerror = null;
+          img.style.display = 'none';
+          if (fb) {
+            const cardObj = (D && D.cards) ? D.cards.find((c) => c.name.toLowerCase() === name.toLowerCase()) : null;
+            const nm = $('#pf-name'); if (nm) nm.textContent = name;
+            const cm = $('#pf-cmc'); if (cm) cm.textContent = cardObj && cardObj.cmc !== undefined ? `CMC ${cardObj.cmc}` : '';
+            const tp = $('#pf-type'); if (tp) tp.textContent = cardObj ? cardObj.type : 'Card';
+            fb.style.display = 'flex';
+          }
         }
       };
       img.src = imgUrl(name, 'normal');
@@ -1822,6 +1737,7 @@
     const p = popup(), w = 260, h = 363, pad = 18;
     let left = x + pad, top = y - h / 3;
     if (left + w > innerWidth - 8) left = x - w - pad;
+    left = Math.max(8, left);
     top = Math.max(8, Math.min(top, innerHeight - h - 8));
     p.style.left = left + 'px'; p.style.top = top + 'px';
   }
@@ -1830,6 +1746,15 @@
     document.addEventListener('mouseover', (e) => { const t = e.target.closest('[data-card]'); if (t) showPopup(t.dataset.card, e.clientX, e.clientY); });
     document.addEventListener('mousemove', (e) => { if (popup().classList.contains('show')) movePopup(e.clientX, e.clientY); });
     document.addEventListener('mouseout', (e) => { const t = e.target.closest('[data-card]'); if (t && !t.contains(e.relatedTarget)) hidePopup(); });
+    // Support mobile touch/click on cards
+    document.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-card]');
+      if (t) {
+        showPopup(t.dataset.card, e.clientX, e.clientY);
+      } else if (!e.target.closest('#card-popup')) {
+        hidePopup();
+      }
+    });
     document.addEventListener('scroll', hidePopup, true);
   }
 
@@ -1936,6 +1861,22 @@
     }
 
     initFilters(); initTabs(); initPopup();
+
+    const mobileToggle = $('#mobile-filter-toggle');
+    const backdrop = $('#filter-backdrop');
+    const filterPanel = $('#filters');
+    if (mobileToggle && filterPanel) {
+      mobileToggle.onclick = () => {
+        filterPanel.classList.toggle('mobile-open');
+        if (backdrop) backdrop.classList.toggle('active', filterPanel.classList.contains('mobile-open'));
+      };
+    }
+    if (backdrop && filterPanel) {
+      backdrop.onclick = () => {
+        filterPanel.classList.remove('mobile-open');
+        backdrop.classList.remove('active');
+      };
+    }
     document.addEventListener('click', (e) => {
       const r = e.target.closest('[data-deck]'); if (r) openDeck(r.dataset.deck);
       if (e.target === $('#modal') || e.target.id === 'modal-close') closeModal();

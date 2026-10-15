@@ -2,12 +2,19 @@
 
 Analyze the performance, card choices and trends of a cEDH commander (or partner pair) using tournament data from [EDHTop16](https://edhtop16.com).
 
-## Just want to look at the data?
+## 🌐 Live Web App (No Computer Needed)
+
+ToniChecker is live on GitHub Pages and 100% mobile-friendly for phones and tablets:
+
+**👉 [https://haakfab.github.io/tonichecker/](https://haakfab.github.io/tonichecker/)**
+
+*(To enable on your fork: Go to repository **Settings → Pages → Source: Deploy from branch `main` / root**)*
+
+## Offline Desktop Usage
 
 1. Click **Code → Download ZIP** on GitHub and unzip it.
-2. Double-click **`index.html`**. That's it – no installation.
-
-(Card images need an internet connection.)
+2. Double-click **`index.html`**. That's it – no installation, runs locally in any browser.
+*(Card images stream live from Scryfall API on hover/tap)*
 
 ## Adding / updating a commander
 

@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <title>ToniChecker: cEDH Analyzer</title>
   <meta name="description" content="Analyze the performance, card choices and trends of any cEDH commander using EDHTop16 tournament data. No installation needed.">
   <link rel="icon" type="image/png" href="checkerToni.png">
@@ -133,7 +134,19 @@
     </main>
   </div>
 
-  <div id="card-popup" class="card-popup" aria-hidden="true"><div class="shimmer"></div><img alt=""></div>
+  <div id="card-popup" class="card-popup" aria-hidden="true">
+    <div class="shimmer"></div>
+    <img alt="">
+    <div class="card-popup-fallback" id="popup-fallback" style="display:none">
+      <div class="pf-header"><span id="pf-name"></span><span id="pf-cmc"></span></div>
+      <div class="pf-body">
+        <div class="pf-art">BLUEPRINT SCHEMATIC</div>
+        <div id="pf-type" class="pf-type"></div>
+      </div>
+    </div>
+  </div>
+  <button id="mobile-filter-toggle" class="mobile-filter-btn" aria-label="Open Filters">⚙ FILTERS <span id="mobile-filter-count"></span></button>
+  <div id="filter-backdrop" class="filter-backdrop"></div>
   <div id="modal" class="modal" aria-hidden="true"><div class="modal-card glass" role="dialog" aria-modal="true"><button class="modal-close" id="modal-close" aria-label="Close">×</button><div id="modal-body"></div></div></div>
   <div id="cmdr-modal" class="modal" aria-hidden="true"><div class="modal-card glass cmdr-modal-card" role="dialog" aria-modal="true"><button class="modal-close" id="cmdr-modal-close" aria-label="Close">×</button><div class="modal-head"><h2 style="font-family:var(--f-head);font-size:26px;color:var(--yellow);letter-spacing:.06em;margin:0">SELECT COMMANDER</h2><div class="hint" style="margin:4px 0 12px">Choose from 32 top cEDH tournament commanders (offline library)</div><input type="search" id="cmdr-search-input" placeholder="Search commander name or partners…" autocomplete="off"></div><div id="cmdr-grid" class="cmdr-grid"></div></div></div>
 
